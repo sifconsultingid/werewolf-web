@@ -104,7 +104,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
       const input: StepInput = {};
       switch (a.kind) {
         case 'cupid': input.lovers = [ui.sel[0], ui.sel[1]]; break;
-        case 'bodyguard': case 'seer': case 'diseased': input.target = ui.sel[0]; break;
+        case 'bodyguard': case 'seer': case 'diseased': case 'thief': input.target = ui.sel[0]; break;
         case 'witch': input.heal = ui.heal; input.poison = ui.poison ? ui.sel[0] ?? null : null; break;
         case 'necromancer': input.revive = ui.necro ? ui.sel[0] ?? null : null; break;
         case 'spellcaster': input.spell = { target: ui.sel[0] ?? null, mode: ui.spell }; break;
@@ -156,6 +156,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     }
     if (priv.lover) notes.push(`💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>. Jika dia mati, kamu ikut mati.`);
     if (priv.coupled?.length) notes.push(`💘 Pasangan yang kamu satukan: <b>${priv.coupled.map((c) => esc(nameOf(c))).join(' & ')}</b>`);
+    if (priv.thief) notes.push(thiefNote(priv.thief));
     for (const s of priv.seerHistory ?? []) {
       notes.push(`👁️ Malam ${s.night}: <b>${esc(nameOf(s.pid))}</b> ${s.isWolf ? '<span class="bad">adalah WEREWOLF 👎</span>' : '<span class="good">BUKAN werewolf 👍</span>'}`);
     }
@@ -165,6 +166,13 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         : `🛌 Malam ${h.night}: kamu tetap tidur.`);
     }
     return notes.length ? `<div class="notes">${notes.map((n) => `<div>${n}</div>`).join('')}</div>` : '';
+  }
+
+  function thiefNote(t: NonNullable<PrivateView['thief']>): string {
+    const r = ROLE_INFO[t.stolenRole];
+    return t.stole
+      ? `🦹 Kamu mencuri kartu <b>${esc(nameOf(t.otherPid))}</b>: sekarang kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`
+      : `🦹 Kartumu (${r.icon} ${esc(r.name)}) dicuri Pencuri! Sekarang kamu <b>Warga Desa</b>.`;
   }
 
   function cardOverlay(): string {
@@ -266,6 +274,11 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
             <button class="btn primary" data-act="walk" data-arg="yes" ${sending ? 'disabled' : ''}>🚶 Jalan-jalan</button></div>`;
         }
         break;
+      case 'thief':
+        body = `<p class="center small">Kamu akan jadi peran orang itu, dan dia jadi Warga Desa. Peran curianmu belum kelihatan sampai kamu mencuri.</p>
+          ${grid(a.candidates, 'sel1', { tint: '#9aa0b4' })}
+          ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Tidak mencuri', true)}`;
+        break;
       case 'diseased':
         body = `<p class="center small">Pilih serigala yang tertular (ikut mati saat pagi)</p>${grid(a.candidates, 'sel1', { tint: '#a6cc33' })}${submitBtn('🦠 Tulari', ui.sel.length === 1)}`;
         break;
@@ -364,6 +377,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (h?.walked) {
       return `<div class="result">${h.nearestWolves.length ? `🐺 Werewolf terdekat: <b>${h.nearestWolves.map((w) => esc(nameOf(w))).join(' / ')}</b>` : 'Tidak ada werewolf di dekatmu.'}</div>`;
     }
+    if (n === 1 && priv?.thief) return `<div class="result">${thiefNote(priv.thief)}</div>`;
     if (n === 1 && priv?.lover) return `<div class="result">💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>!</div>`;
     return '';
   }

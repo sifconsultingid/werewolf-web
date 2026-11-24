@@ -18,7 +18,7 @@ export const TEAM_COLOR: Record<Team, string> = {
 export const ROLES = [
   'werewolf', 'villager', 'seer', 'bodyguard', 'witch', 'hunter', 'prince',
   'diseased', 'necromancer', 'spellcaster', 'insomniac', 'lycan',
-  'cupid', 'tanner',
+  'cupid', 'tanner', 'thief',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -126,11 +126,18 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
     short: 'Benci pekerjaannya. Ia MENANG sendiri jika berhasil dieksekusi lewat voting.',
     tips: 'Bersikaplah mencurigakan—tapi jangan terlalu jelas!',
   },
+  thief: {
+    name: 'Pencuri', team: 'village', icon: '🦹', colors: [rgb(0.15, 0.15, 0.18), rgb(0.6, 0.6, 0.7)],
+    balance: -1, allowsMultiple: false, nightOrder: -1, looksLikeWerewolf: false,
+    short: 'Malam pertama boleh mencuri kartu satu pemain: kamu jadi peran itu, dan dia jadi Warga Desa. Kalau tidak mencuri, kamu warga biasa.',
+    tips: 'Curi kartu yang kuat—tapi hati-hati, kalau mencuri Werewolf kamu pindah ke Tim Serigala!',
+  },
 };
 
 export type RoleCounts = Partial<Record<Role, number>>;
 
 export const WAKE_SCRIPT: Partial<Record<Role, string>> = {
+  thief: 'Pencuri, bangunlah. Tunjuk satu orang yang kartunya ingin kamu curi, atau tetap jadi warga biasa.',
   cupid: 'Cupid, bangunlah. Tunjuk dua orang yang akan saling jatuh cinta.',
   bodyguard: 'Pengawal, bangunlah. Siapa yang ingin kamu lindungi malam ini?',
   werewolf: 'Para serigala, bangunlah. Sepakati satu korban yang akan kalian mangsa malam ini.',

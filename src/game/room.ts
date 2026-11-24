@@ -339,6 +339,8 @@ export interface PrivateView {
   coupled?: string[];
   seerHistory?: { night: number; pid: string; isWolf: boolean }[];
   insomniacHistory?: { night: number; walked: boolean; nearestWolves: string[] }[];
+  /** Pencuri: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
+  thief?: { stole: boolean; otherPid?: string; stolenRole: Role };
   action?: ActionPrompt | null;
   updatedAt: number;
 }
@@ -483,6 +485,12 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (g.lovers.includes(me.id)) view.lover = g.lovers.find((l) => l !== me.id);
   if (me.role === 'cupid' && g.lovers.length) view.coupled = [...g.lovers];
   if (me.role === 'seer') view.seerHistory = g.seerHistory.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
+  const swap = g.thiefSwap;
+  if (swap && (swap.thiefId === me.id || swap.targetId === me.id)) {
+    const stole = swap.thiefId === me.id;
+    // Korban tidak diberi tahu siapa Pencurinya
+    view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole };
+  }
   if (me.role === 'insomniac') {
     view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));
   }

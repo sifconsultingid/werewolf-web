@@ -554,6 +554,10 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (g.players.some((p) => p.role === 'witch')) flags.push(`🧪 Penyembuh: ${g.witchHealUsed ? 'terpakai' : 'ada'} • Racun: ${g.witchPoisonUsed ? 'terpakai' : 'ada'}`);
     if (g.players.some((p) => p.role === 'necromancer')) flags.push(`🖐️ Nekromancer: ${g.necromancerUsed ? 'terpakai' : 'belum'}`);
     if (g.lastProtected) flags.push(`🛡️ Dilindungi malam lalu: ${esc(player(g, g.lastProtected)?.name)}`);
+    if (g.thiefSwap) {
+      const t = g.thiefSwap;
+      flags.push(`🦹 ${esc(player(g, t.thiefId)?.name)} mencuri kartu ${esc(ROLE_INFO[t.stolenRole].name)} dari ${esc(player(g, t.targetId)?.name)}`);
+    }
     if (g.lovers.length) flags.push(`💘 Kekasih: ${g.lovers.map((l) => esc(player(g, l)?.name)).join(' & ')}`);
     return `<div class="card secrets">
       <div class="row between"><h3>🔒 Catatan Rahasia Narator</h3><button class="btn small ghost" data-act="toggleSecrets">Sembunyikan</button></div>

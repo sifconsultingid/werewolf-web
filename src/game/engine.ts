@@ -91,6 +91,8 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export interface SeerResult { night: number; targetId: string; isWolf: boolean }
+/** Pencuri menukar kartu di malam pertama */
+export interface ThiefSwap { thiefId: string; targetId: string; stolenRole: Role }
 export interface InsomniacResult { night: number; walked: boolean; nearestWolfIds: string[] }
 
 export interface GameState {
@@ -123,6 +125,8 @@ export interface GameState {
   /** Mantra Perapal untuk siang ini */
   spellTarget: string | null;
   spellMode: SpellMode;
+  /** Hasil curian Pencuri (null = belum/tidak mencuri) */
+  thiefSwap?: ThiefSwap | null;
 
   // Siang
   lastDeaths: DeathEvent[];
@@ -288,6 +292,7 @@ export function createGame(
     lastRevived: null,
     spellTarget: null,
     spellMode: 'mute',
+    thiefSwap: null,
     lastDeaths: [],
     pendingHunters: [],
     huntersUsed: [],
@@ -355,7 +360,7 @@ export function startNight(g: GameState): void {
     .sort((a, b) => (ROLE_INFO[a].nightOrder ?? 0) - (ROLE_INFO[b].nightOrder ?? 0));
   const steps: NightStep[] = [];
   for (const role of ordered) {
-    if (role === 'cupid' && g.nightNumber !== 1) continue;
+    if ((role === 'cupid' || role === 'thief') && g.nightNumber !== 1) continue;
     steps.push({ role, active: isRoleAlive(g, role) });
   }
   g.nightSteps = steps;
@@ -396,6 +401,7 @@ export function stepCandidates(g: GameState, role: Role): Player[] {
     case 'necromancer': return g.necromancerUsed ? [] : g.players.filter((p) => !p.isAlive);
     case 'spellcaster': return alive;
     case 'diseased': return alive.filter((p) => p.role === 'werewolf');
+    case 'thief': return alive.filter((p) => p.role !== 'thief');
     default: return [];
   }
 }
@@ -418,7 +424,7 @@ export function nearestWerewolves(g: GameState, fromId: string): string[] {
 export interface StepInput {
   /** Cupid: dua kekasih */
   lovers?: [string, string];
-  /** Pengawal, Werewolf, Peramal, Si Sakit: satu target */
+  /** Pengawal, Werewolf, Peramal, Si Sakit, Pencuri: satu target (Pencuri tanpa target = tidak mencuri) */
   target?: string;
   /** Penyihir */
   heal?: boolean;
@@ -539,6 +545,12 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
         if (input.target != null) assertCandidate(g, 'diseased', input.target);
         g.diseasedRevenge = input.target ?? null;
         break;
+      case 'thief':
+        if (input.target != null) {
+          assertCandidate(g, 'thief', input.target);
+          thiefSteal(g, input.target);
+        }
+        break;
       default:
         break;
     }
@@ -552,6 +564,21 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
   }
   resolveNight(g, now);
   return true;
+}
+
+/**
+ * Pencuri mengambil kartu target: Pencuri menjadi peran target, target menjadi Warga Desa.
+ * Dipanggil di langkah pertama malam pertama, jadi peran curian masih sempat beraksi malam itu.
+ */
+function thiefSteal(g: GameState, targetId: string): void {
+  const thief = g.players.find((p) => p.role === 'thief' && p.isAlive);
+  const target = player(g, targetId);
+  if (!thief || !target) return;
+  const stolen = target.role;
+  thief.role = stolen;
+  target.role = 'villager';
+  g.thiefSwap = { thiefId: thief.id, targetId: target.id, stolenRole: stolen };
+  g.log.push({ text: `${thief.name} mencuri kartu ${ROLE_INFO[stolen].name} dari ${target.name}`, icon: ROLE_INFO.thief.icon });
 }
 
 export function resolveNight(g: GameState, now = Date.now()): void {
