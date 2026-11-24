@@ -97,6 +97,16 @@ export interface ThiefSwap {
   /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight) */
   applied: boolean;
 }
+/** Troublemaker menukar kartu dua pemain lain di malam pertama */
+export interface TroublemakerSwap {
+  troublemakerId: string;
+  /** Dua pemain yang kartunya ditukar */
+  pids: [string, string];
+  /** Peran baru masing-masing setelah ditukar (diisi saat pagi) */
+  newRoles?: [Role, Role];
+  /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight), setelah curian Thief */
+  applied: boolean;
+}
 export interface InsomniacResult { night: number; walked: boolean; nearestWolfIds: string[] }
 
 export interface GameState {
@@ -131,6 +141,8 @@ export interface GameState {
   spellMode: SpellMode;
   /** Hasil curian Thief (null = belum/tidak mencuri) */
   thiefSwap?: ThiefSwap | null;
+  /** Tukaran Troublemaker (null = belum/tidak menukar) */
+  troublemakerSwap?: TroublemakerSwap | null;
 
   // Siang
   lastDeaths: DeathEvent[];
@@ -297,6 +309,7 @@ export function createGame(
     spellTarget: null,
     spellMode: 'mute',
     thiefSwap: null,
+    troublemakerSwap: null,
     lastDeaths: [],
     pendingHunters: [],
     huntersUsed: [],
@@ -364,7 +377,7 @@ export function startNight(g: GameState): void {
     .sort((a, b) => (ROLE_INFO[a].nightOrder ?? 0) - (ROLE_INFO[b].nightOrder ?? 0));
   const steps: NightStep[] = [];
   for (const role of ordered) {
-    if ((role === 'cupid' || role === 'thief') && g.nightNumber !== 1) continue;
+    if ((role === 'cupid' || role === 'thief' || role === 'troublemaker') && g.nightNumber !== 1) continue;
     steps.push({ role, active: isRoleAlive(g, role) });
   }
   g.nightSteps = steps;
@@ -406,6 +419,7 @@ export function stepCandidates(g: GameState, role: Role): Player[] {
     case 'spellcaster': return alive;
     case 'diseased': return alive.filter((p) => p.role === 'werewolf');
     case 'thief': return alive.filter((p) => p.role !== 'thief');
+    case 'troublemaker': return alive.filter((p) => p.role !== 'troublemaker');
     default: return [];
   }
 }
@@ -430,6 +444,8 @@ export interface StepInput {
   lovers?: [string, string];
   /** Bodyguard, Werewolf, Seer, Diseased, Thief: satu target (Thief tanpa target = tidak mencuri) */
   target?: string;
+  /** Troublemaker: dua pemain yang kartunya ditukar (kosong = tidak menukar) */
+  swap?: [string, string];
   /** Witch */
   heal?: boolean;
   poison?: string | null;
@@ -555,6 +571,16 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
           thiefSteal(g, input.target);
         }
         break;
+      case 'troublemaker':
+        if (input.swap) {
+          const [a, b] = input.swap;
+          if (a === b) throw new Error('Pilih dua orang yang berbeda.');
+          assertCandidate(g, 'troublemaker', a);
+          assertCandidate(g, 'troublemaker', b);
+          const tm = g.players.find((p) => p.role === 'troublemaker' && p.isAlive);
+          if (tm) g.troublemakerSwap = { troublemakerId: tm.id, pids: [a, b], applied: false };
+        }
+        break;
       default:
         break;
     }
@@ -595,8 +621,22 @@ function applyThiefSwap(g: GameState): void {
   g.log.push({ text: `${thief.name} mencuri kartu ${ROLE_INFO[s.stolenRole].name} dari ${target.name}`, icon: ROLE_INFO.thief.icon });
 }
 
+/** Tukar kartu pilihan Troublemaker. Dijalankan setelah curian Thief, jadi yang ditukar adalah kartu hasil curian. */
+function applyTroublemakerSwap(g: GameState): void {
+  const s = g.troublemakerSwap;
+  if (!s || s.applied) return;
+  s.applied = true;
+  const a = player(g, s.pids[0]);
+  const b = player(g, s.pids[1]);
+  if (!a || !b) return;
+  [a.role, b.role] = [b.role, a.role];
+  s.newRoles = [a.role, b.role];
+  g.log.push({ text: `Troublemaker menukar kartu ${a.name} (sekarang ${ROLE_INFO[a.role].name}) dan ${b.name} (sekarang ${ROLE_INFO[b.role].name})`, icon: ROLE_INFO.troublemaker.icon });
+}
+
 export function resolveNight(g: GameState, now = Date.now()): void {
   applyThiefSwap(g);
+  applyTroublemakerSwap(g);
   const killed: [string, DeathCause][] = [];
   if (g.wolfTarget) {
     const isProtected = g.protectedTonight === g.wolfTarget;
@@ -819,9 +859,17 @@ export function cardStolenNotice(g: GameState): boolean {
   return !!g.thiefSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
 }
 
+export const TROUBLEMAKER_NOTICE = 'Ada yang membuat onar semalam! Kartu dua orang di desa ini sudah ditukar.';
+
+/** Pagi setelah malam pertama: umumkan ke semua bahwa Troublemaker beraksi (tanpa menyebut siapa). */
+export function cardsSwappedNotice(g: GameState): boolean {
+  return !!g.troublemakerSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
+}
+
 export function morningAnnouncement(g: GameState): string {
   let extra = '';
   if (cardStolenNotice(g)) extra += ' ' + THIEF_NOTICE;
+  if (cardsSwappedNotice(g)) extra += ' ' + TROUBLEMAKER_NOTICE;
   const r = player(g, g.lastRevived);
   if (r) extra += ` ${r.name} bangkit kembali dari kematian!`;
   const s = player(g, g.spellTarget);

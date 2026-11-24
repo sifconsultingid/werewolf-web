@@ -33,9 +33,16 @@ function randomStepInput(rng: R, g: GameState): StepInput {
       const b = pick(rng, cands.filter((x) => x !== a))!;
       return { lovers: [a, b] };
     }
+    case 'troublemaker': {
+      if (cands.length < 2 || !chance(rng, 0.8)) return {};
+      const a = pick(rng, cands)!;
+      const b = pick(rng, cands.filter((x) => x !== a))!;
+      return { swap: [a, b] };
+    }
     case 'bodyguard':
     case 'seer':
     case 'diseased':
+    case 'thief':
       return { target: chance(rng, 0.9) ? pick(rng, cands) : undefined };
     case 'werewolf':
       return { target: chance(rng, 0.95) ? pick(rng, cands) : undefined };

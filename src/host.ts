@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import {
   balanceScore, beginFirstRound, changeCount, commitStep, computeWinner, currentStep, DEFAULT_SETTINGS,
   eligibleVoters, execute, finishDay, goToDiscussion, goToVote, hunterShoots, MAX_PLAYERS, MIN_PLAYERS,
-  cardStolenNotice, morningAnnouncement, player, THIEF_NOTICE, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
+  cardStolenNotice, cardsSwappedNotice, morningAnnouncement, player, THIEF_NOTICE, TROUBLEMAKER_NOTICE, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
   winnerSubtitle, winnerTitle, autoAssignRoles, type GameState, type Settings,
 } from './game/engine';
 import {
@@ -558,6 +558,11 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       const t = g.thiefSwap;
       flags.push(`🦹 ${esc(player(g, t.thiefId)?.name)} mencuri kartu ${esc(ROLE_INFO[t.stolenRole].name)} dari ${esc(player(g, t.targetId)?.name)}`);
     }
+    if (g.troublemakerSwap) {
+      const t = g.troublemakerSwap;
+      const [a, b] = t.pids.map((id) => esc(player(g, id)?.name));
+      flags.push(`🃏 ${esc(player(g, t.troublemakerId)?.name)} menukar kartu ${a} ⇄ ${b}${t.newRoles ? ` (sekarang ${a}: ${esc(ROLE_INFO[t.newRoles[0]].name)}, ${b}: ${esc(ROLE_INFO[t.newRoles[1]].name)})` : ' (berlaku pagi)'}`);
+    }
     if (g.lovers.length) flags.push(`💘 Kekasih: ${g.lovers.map((l) => esc(player(g, l)?.name)).join(' & ')}`);
     return `<div class="card secrets">
       <div class="row between"><h3>🔒 Catatan Rahasia Narator</h3><button class="btn small ghost" data-act="toggleSecrets">Sembunyikan</button></div>
@@ -635,6 +640,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${g.lastRevived ? `<p class="good">🖐️ ${esc(player(g, g.lastRevived)?.name)} bangkit kembali!</p>` : ''}
       ${spelled && spelled.isAlive ? `<p class="spell">🤫 ${esc(spellSentence(g.spellMode, spelled.name))}</p>` : ''}
       ${cardStolenNotice(g) ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : ''}
+      ${cardsSwappedNotice(g) ? `<p class="spell">🃏 ${esc(TROUBLEMAKER_NOTICE)}</p>` : ''}
     </div>
     ${hunterBlock(g)}
     <button class="btn primary block" data-act="toDiscussion" ${pending ? 'disabled' : ''}>

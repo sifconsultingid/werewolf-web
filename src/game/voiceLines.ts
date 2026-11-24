@@ -4,7 +4,7 @@
 // Setelah mengubah teks di file ini, jalankan ulang `scripts/generate-vo.sh`.
 
 import { ROLES, ROLE_INFO, WAKE_SCRIPT, sleepScript, type Role } from './roles';
-import { THIEF_NOTICE, type DeathCause, type Winner } from './engine';
+import { THIEF_NOTICE, TROUBLEMAKER_NOTICE, type DeathCause, type Winner } from './engine';
 
 export const NIGHT_FALLS = 'Malam telah tiba. Semua warga desa, tutup mata kalian.';
 export const MORNING_COMES = 'Pagi telah tiba. Semua warga desa, buka mata kalian.';
@@ -49,6 +49,7 @@ export const VOICE_CLIPS: Record<string, string> = (() => {
     spell_mute: 'Ada warga yang dibungkam. Dia tidak boleh bicara hari ini. Lihat layar.',
     spell_noVote: 'Ada warga yang dilarang ikut voting hari ini. Lihat layar.',
     thief_swap: THIEF_NOTICE,
+    troublemaker_swap: TROUBLEMAKER_NOTICE,
     prince_saved: 'Ternyata dia adalah Prince, dan dia selamat dari eksekusi!',
   };
   for (const [role, text] of Object.entries(WAKE_SCRIPT)) c[`wake_${role}`] = text!;
