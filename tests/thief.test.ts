@@ -16,13 +16,33 @@ const roomOf = (g: GameState) => ({
 } as unknown as Room);
 
 describe('Thief', () => {
-  it('bangun paling akhir di malam 1 dan tidak muncul lagi di malam berikutnya', () => {
-    const g = gameWith(['thief', 'cupid', 'werewolf', 'seer', 'villager']);
+  it('bangun paling akhir tiap malam selama belum mencuri; setelah mencuri tidak dipanggil lagi', () => {
+    const g = gameWith(['thief', 'cupid', 'werewolf', 'seer', 'villager', 'villager', 'villager']);
     beginFirstRound(g);
     expect(g.nightSteps.map((s) => s.role)).toEqual(['cupid', 'werewolf', 'seer', 'thief']);
+    while (g.phase === 'night') commitStep(g, {}, Date.now(), true); // malam 1: tidak mencuri
+    expect(g.players[0].role).toBe('thief');
+    g.phase = 'day';
+    startNight(g);
+    expect(g.nightSteps.map((s) => s.role)).toEqual(['werewolf', 'seer', 'thief']);
+    toThief(g);
+    commitStep(g, { target: 'p3' }); // malam 2: curi Seer
+    expect(g.players[0].role).toBe('seer');
+    expect(g.thiefSwap).toMatchObject({ night: 2, applied: true });
+    expect(morningAnnouncement(g)).toContain(THIEF_NOTICE);
     g.phase = 'day';
     startNight(g);
     expect(g.nightSteps.some((s) => s.role === 'thief')).toBe(false);
+  });
+
+  it('Thief yang mati sebelum mencuri tetap dipanggil (langkah tidak aktif) supaya tidak ketahuan', () => {
+    const g = gameWith(['thief', 'seer', 'werewolf', 'villager', 'villager']);
+    beginFirstRound(g);
+    while (g.phase === 'night') commitStep(g, {});
+    g.players[0].isAlive = false;
+    g.phase = 'day';
+    startNight(g);
+    expect(g.nightSteps.find((s) => s.role === 'thief')?.active).toBe(false);
   });
 
   it('peran asli tetap beraksi malam 1; kartu baru ditukar saat pagi', () => {
@@ -45,10 +65,10 @@ describe('Thief', () => {
     toThief(g);
     commitStep(g, { target: 'p1' });
     const room = roomOf(g);
-    expect(buildPrivateView(room, 'u0').thief).toEqual({ stole: true, otherPid: 'p1', stolenRole: 'seer' });
+    expect(buildPrivateView(room, 'u0').thief).toEqual({ stole: true, otherPid: 'p1', stolenRole: 'seer', night: 1 });
     const victim = buildPrivateView(room, 'u1');
     expect(victim.role).toBe('villager');
-    expect(victim.thief).toEqual({ stole: false, otherPid: undefined, stolenRole: 'seer' });
+    expect(victim.thief).toEqual({ stole: false, otherPid: undefined, stolenRole: 'seer', night: 1 });
   });
 
   it('mencuri Werewolf: serigala asli ikut memangsa malam 1, Thief jadi serigala mulai pagi', () => {

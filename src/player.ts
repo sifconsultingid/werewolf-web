@@ -285,9 +285,9 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         }
         break;
       case 'thief':
-        body = `<p class="center small">Mulai pagi, kamu jadi peran orang itu dan dia jadi Villager. Peran curianmu baru kelihatan setelah kamu mencuri.</p>
+        body = `<p class="center small">Kesempatanmu cuma sekali. Mulai pagi, kamu jadi peran orang itu dan dia jadi Villager. Boleh juga disimpan untuk malam lain.</p>
           ${grid(a.candidates, 'sel1', { tint: '#9aa0b4' })}
-          ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Tidak mencuri', true)}`;
+          ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Simpan untuk malam lain', true)}`;
         break;
       case 'troublemaker': {
         const two = ui.sel.length === 2;
@@ -402,7 +402,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (h?.walked) {
       return `<div class="result">${h.nearestWolves.length ? `🐺 Werewolf terdekat: <b>${h.nearestWolves.map((w) => esc(nameOf(w))).join(' / ')}</b>` : 'Tidak ada werewolf di dekatmu.'}</div>`;
     }
-    if (n === 1 && priv?.thief) {
+    if (priv?.thief && priv.thief.night === n) {
       return `<div class="result">${thiefNote(priv.thief)}</div>`;
     }
     if (n === 1 && priv?.troublemaker) {

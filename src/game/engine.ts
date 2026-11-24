@@ -91,9 +91,11 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export interface SeerResult { night: number; targetId: string; isWolf: boolean }
-/** Thief menukar kartu di malam pertama */
+/** Thief menukar kartu (sekali sepanjang permainan, di malam mana pun) */
 export interface ThiefSwap {
   thiefId: string; targetId: string; stolenRole: Role;
+  /** Malam saat Thief mencuri (tidak ada = malam 1, untuk state lama) */
+  night?: number;
   /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight) */
   applied: boolean;
 }
@@ -377,7 +379,7 @@ export function startNight(g: GameState): void {
     .sort((a, b) => (ROLE_INFO[a].nightOrder ?? 0) - (ROLE_INFO[b].nightOrder ?? 0));
   const steps: NightStep[] = [];
   for (const role of ordered) {
-    if ((role === 'cupid' || role === 'thief' || role === 'troublemaker') && g.nightNumber !== 1) continue;
+    if ((role === 'cupid' || role === 'troublemaker') && g.nightNumber !== 1) continue;
     steps.push({ role, active: isRoleAlive(g, role) });
   }
   g.nightSteps = steps;
@@ -597,15 +599,16 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
 }
 
 /**
- * Thief memilih kartu yang dicuri. Thief bangun paling akhir di malam pertama, dan kartunya baru
+ * Thief memilih kartu yang dicuri, sekali sepanjang permainan di malam mana pun. Selama belum mencuri
+ * ia tetap berperan Thief dan dibangunkan tiap malam (setelah peran lain). Kartunya baru
  * ditukar saat pagi (applyThiefSwap), jadi malam itu semua peran beraksi dengan pemilik aslinya
  * dan tidak ada yang "terbangun sia-sia".
  */
 function thiefSteal(g: GameState, targetId: string): void {
   const thief = g.players.find((p) => p.role === 'thief' && p.isAlive);
   const target = player(g, targetId);
-  if (!thief || !target) return;
-  g.thiefSwap = { thiefId: thief.id, targetId: target.id, stolenRole: target.role, applied: false };
+  if (!thief || !target || g.thiefSwap) return;
+  g.thiefSwap = { thiefId: thief.id, targetId: target.id, stolenRole: target.role, applied: false, night: g.nightNumber };
 }
 
 function applyThiefSwap(g: GameState): void {
@@ -854,9 +857,10 @@ export function computeWinner(g: GameState): Winner | null {
 /** Kalimat pengumuman pagi (untuk dibacakan narator). */
 export const THIEF_NOTICE = 'Semalam ada kartu yang dicuri! Seseorang di desa ini sudah bukan dirinya yang dulu.';
 
-/** Pagi setelah malam pertama: umumkan ke semua bahwa Thief beraksi (tanpa menyebut siapa). */
+/** Pagi setelah malam curian: umumkan ke semua bahwa Thief beraksi (tanpa menyebut siapa). */
 export function cardStolenNotice(g: GameState): boolean {
-  return !!g.thiefSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
+  const s = g.thiefSwap;
+  return !!s && s.applied && (s.night ?? 1) === g.nightNumber && (g.phase === 'morning' || g.phase === 'day');
 }
 
 export const TROUBLEMAKER_NOTICE = 'Ada yang membuat onar semalam! Kartu dua orang di desa ini sudah ditukar.';

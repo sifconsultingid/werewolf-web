@@ -348,7 +348,7 @@ export interface PrivateView {
   seerHistory?: { night: number; pid: string; isWolf: boolean }[];
   insomniacHistory?: { night: number; walked: boolean; nearestWolves: string[] }[];
   /** Thief: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
-  thief?: { stole: boolean; otherPid?: string; stolenRole: Role };
+  thief?: { stole: boolean; otherPid?: string; stolenRole: Role; night: number };
   /** Troublemaker: dua orang yang kamu tukar (tanpa kartunya) / korban: peran barumu (tanpa nama pelaku) */
   troublemaker?: { swapped: string[] } | { newRole: Role };
   action?: ActionPrompt | null;
@@ -502,7 +502,7 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (swap && (swap.thiefId === me.id || (swap.applied && swap.targetId === me.id))) {
     const stole = swap.thiefId === me.id;
     // Korban tidak diberi tahu siapa Thiefnya
-    view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole };
+    view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole, night: swap.night ?? 1 };
   }
   const tm = g.troublemakerSwap;
   if (tm) {
