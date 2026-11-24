@@ -16,7 +16,7 @@ export interface AutoTimings {
   nightStepSeconds: number;
   /** Batas waktu voting */
   voteSeconds: number;
-  /** Batas waktu Pemburu menembak */
+  /** Batas waktu Hunter menembak */
   hunterSeconds: number;
 }
 

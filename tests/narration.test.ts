@@ -18,10 +18,10 @@ describe('narasi voice-over', () => {
     commitStep(g, { target: id(g, 'villager') });
     const second = narrationFor(g)!;
     expect(second.key).not.toBe(first.key);
-    expect(texts(second)).toEqual(['Pengawal, tidurlah kembali.', WAKE_SCRIPT.werewolf]);
+    expect(texts(second)).toEqual(['Bodyguard, tidurlah kembali.', WAKE_SCRIPT.werewolf]);
   });
 
-  it('pagi: mengumumkan korban, lalu memanggil Pemburu (append-only, key tetap)', () => {
+  it('pagi: mengumumkan korban, lalu memanggil Hunter (append-only, key tetap)', () => {
     const g = gameWith(['werewolf', 'hunter', 'villager', 'villager', 'villager', 'werewolf', 'villager']);
     beginFirstRound(g);
     while (g.phase === 'night') commitStep(g, { target: id(g, 'hunter') });

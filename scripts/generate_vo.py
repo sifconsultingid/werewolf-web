@@ -20,10 +20,17 @@ RATE = os.environ.get("VO_RATE", "-5%")
 async def main(src: str, out: str) -> None:
     lines = json.load(open(src, encoding="utf-8"))
     os.makedirs(out, exist_ok=True)
+    # Teks lama dari manifest: klip yang teksnya berubah (mis. nama peran) direkam ulang
+    old = {}
+    try:
+        old = json.load(open(os.path.join(out, "manifest.json"), encoding="utf-8")).get("texts", {})
+    except (OSError, ValueError):
+        pass
     done = []
     for i, (cid, text) in enumerate(lines.items(), 1):
         path = os.path.join(out, f"{cid}.mp3")
-        if not os.path.exists(path) or os.path.getsize(path) == 0:
+        stale = cid in old and old[cid] != text
+        if stale or not os.path.exists(path) or os.path.getsize(path) == 0:
             for attempt in range(3):
                 try:
                     await edge_tts.Communicate(text, VOICE, rate=RATE).save(path)

@@ -4,7 +4,7 @@
 
 import {
   alivePlayers, autoAssignRoles, castVote, commitStep, createGame, currentStep, DEFAULT_SETTINGS,
-  eligibleVoters, hunterShoots, insomniacPeek, morningAnnouncement, seerPeek, player, stepCandidates, votes,
+  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, morningAnnouncement, seerPeek, player, stepCandidates, votes,
   type DeathCause, type GameState, type Phase, type Rng, type Settings, type SpellMode, type StepInput,
   type Winner, MAX_PLAYERS,
 } from './engine';
@@ -42,7 +42,7 @@ export type PlayerAction =
   | { type: 'hello' }
   | { type: 'ready' }
   | { type: 'night'; input: StepInput }
-  /** Peramal/Insomnia: lihat hasil dulu, lalu kirim 'night' untuk tidur kembali */
+  /** Seer/Insomniac: lihat hasil dulu, lalu kirim 'night' untuk tidur kembali */
   | { type: 'peek'; target?: string; walk?: boolean }
   | { type: 'wolfVote'; target: string | null }
   | { type: 'vote'; target: string | null }
@@ -291,10 +291,12 @@ export interface PublicView {
   winner: Winner | null;
   lovers: string[];
   announcement: string | null;
+  /** Thief beraksi semalam (diumumkan ke semua, tanpa nama) */
+  cardStolen?: boolean;
   /** Mode narator otomatis */
   auto?: {
     paused: boolean;
-    /** Batas waktu tahap ini (reveal, voting, Pemburu) */
+    /** Batas waktu tahap ini (reveal, voting, Hunter) */
     endsAt: number | null;
     /** Voting ulang karena seri */
     revote: boolean;
@@ -308,17 +310,17 @@ export interface ActionPrompt {
   key: string;
   kind: Role | 'hunter';
   candidates: string[];
-  /** Penyihir: korban serigala malam ini */
+  /** Witch: korban serigala malam ini */
   victim?: string | null;
   canHeal?: boolean;
   canPoison?: boolean;
-  /** Pengawal: tidak boleh melindungi orang ini */
+  /** Bodyguard: tidak boleh melindungi orang ini */
   lastProtected?: string | null;
-  /** Nekromancer: kekuatan sudah terpakai */
+  /** Necromancer: kekuatan sudah terpakai */
   used?: boolean;
-  /** Peramal: hasil terawangan malam ini (sudah dilihat, tinggal tidur kembali) */
+  /** Seer: hasil terawangan malam ini (sudah dilihat, tinggal tidur kembali) */
   peeked?: { pid: string; isWolf: boolean };
-  /** Insomnia: keputusan malam ini */
+  /** Insomniac: keputusan malam ini */
   walked?: { walked: boolean; nearestWolves: string[] };
 }
 
@@ -339,6 +341,8 @@ export interface PrivateView {
   coupled?: string[];
   seerHistory?: { night: number; pid: string; isWolf: boolean }[];
   insomniacHistory?: { night: number; walked: boolean; nearestWolves: string[] }[];
+  /** Thief: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
+  thief?: { stole: boolean; otherPid?: string; stolenRole: Role };
   action?: ActionPrompt | null;
   updatedAt: number;
 }
@@ -350,7 +354,7 @@ function roleIsPublic(g: GameState, pid: string): boolean {
   if (p.princeRevealed) return true;
   if (p.isAlive) return false;
   if (g.settings.revealRoleOnDeath) return true;
-  // Si Penyamak yang dieksekusi selalu terbuka
+  // Tanner yang dieksekusi selalu terbuka
   return p.role === 'tanner' && g.executedId === p.id;
 }
 
@@ -413,6 +417,7 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
     winner: g.winner,
     lovers: g.phase === 'gameOver' ? g.lovers : [],
     announcement: g.phase === 'morning' ? morningAnnouncement(g) : null,
+    cardStolen: cardStolenNotice(g) || undefined,
     auto: room.auto ? {
       paused: room.auto.paused,
       endsAt: publicDeadline(g, room.auto),
@@ -483,6 +488,13 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (g.lovers.includes(me.id)) view.lover = g.lovers.find((l) => l !== me.id);
   if (me.role === 'cupid' && g.lovers.length) view.coupled = [...g.lovers];
   if (me.role === 'seer') view.seerHistory = g.seerHistory.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
+  const swap = g.thiefSwap;
+  // Korban baru tahu saat pagi (kartu ditukar saat pagi); Thief langsung tahu curiannya
+  if (swap && (swap.thiefId === me.id || (swap.applied && swap.targetId === me.id))) {
+    const stole = swap.thiefId === me.id;
+    // Korban tidak diberi tahu siapa Thiefnya
+    view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole };
+  }
   if (me.role === 'insomniac') {
     view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));
   }
