@@ -172,3 +172,19 @@ untuk layanan yang membangun dari Git, masukkan variabel `VITE_...` yang sama di
   `firebase init hosting` (public dir: `dist`), `firebase deploy`.
 
 Semua layanan di atas memberi HTTPS, yang dibutuhkan agar tombol salin link dan getar HP berfungsi.
+
+## Voice-over narator
+
+Layar narator membacakan narasinya sendiri. Urutan prioritasnya:
+
+1. **Rekaman MP3** di `public/vo/gadis/` (suara neural `id-ID-GadisNeural`), sama di semua browser.
+   Kalimat yang memuat nama pemain direkam dalam versi tanpa nama, sedangkan namanya tetap tampil di layar.
+2. **Suara browser** (Web Speech API) sebagai cadangan, atau kalau narator memilih suara lain di kartu "Voice-over Narator".
+
+Katalog kalimat rekaman ada di `src/game/voiceLines.ts`. Setelah teksnya diubah, generate ulang rekamannya:
+
+```bash
+npm run vo:lines                 # tulis vo-lines.json
+python3 -m pip install edge-tts
+python3 scripts/generate_vo.py vo-lines.json public/vo/gadis
+```
