@@ -2,6 +2,13 @@ name: Generate VO clips
 # Bikin clip voice-over yang belum ada (suara Gadis via edge-tts) lalu commit ke branch ini.
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - src/game/voiceLines.ts
+      - src/game/roles.ts
+      - src/game/engine.ts
+      - scripts/generate_vo.py
+      - .github/workflows/generate-vo.yml
 permissions:
   contents: write
 jobs:
@@ -9,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: npm }
       - uses: actions/setup-python@v5
