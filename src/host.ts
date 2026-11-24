@@ -18,7 +18,7 @@ import type { Backend } from './net/backend';
 import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, teamTag,
 } from './ui/common';
-import { createVoice } from './ui/voice';
+import { createVoice, RECORDED } from './ui/voice';
 
 const STORE = (code: string) => `ww:host:${code}`;
 export const LAST_HOST_KEY = 'ww:host:last';
@@ -257,8 +257,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     voiceRate: (arg) => { voice.setRate(Math.round((voice.rate + Number(arg)) * 100) / 100); render(); },
     voiceTest: () => {
       if (!voice.enabled) voice.setEnabled(true);
-      voice.stop();
-      voice.say('Malam telah tiba. Semua warga desa, tutup mata kalian.');
+      voice.test();
       render();
     },
     playAgain: () => { if (room) { backToLobby(room); commit(); } },
@@ -340,7 +339,9 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       return `<div class="card"><h3>🔊 Voice-over Narator</h3><p class="muted small">Browser ini tidak mendukung suara (Web Speech API). Coba Chrome, Edge, atau Safari.</p></div>`;
     }
     const list = voice.voices();
-    const opts = [`<option value="">Otomatis${voice.hasIndonesian() ? ' (Bahasa Indonesia)' : ''}</option>`,
+    const opts = [
+      `<option value="">Otomatis${voice.recordedAvailable ? ` (${esc(voice.recordedLabel)})` : voice.hasIndonesian() ? ' (Bahasa Indonesia)' : ''}</option>`,
+      ...(voice.recordedAvailable ? [`<option value="${RECORDED}" ${voice.voiceURI === RECORDED ? 'selected' : ''}>${esc(voice.recordedLabel)}</option>`] : []),
       ...list.map((v) => `<option value="${esc(v.voiceURI)}" ${v.voiceURI === voice.voiceURI ? 'selected' : ''}>${esc(v.name)} — ${esc(v.lang)}</option>`)];
     return `<div class="card"><h3>🔊 Voice-over Narator</h3>
       <label class="toggle"><input type="checkbox" data-act="voiceToggle" ${voice.enabled ? 'checked' : ''}><span>Bacakan narasi otomatis</span></label>
@@ -349,7 +350,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
         <button data-act="voiceRate" data-arg="-0.1" ${voice.rate <= 0.6 ? 'disabled' : ''}>−</button><span>${voice.rate.toFixed(1)}×</span>
         <button data-act="voiceRate" data-arg="0.1" ${voice.rate >= 1.4 ? 'disabled' : ''}>+</button></div></div>
       <button class="btn small" data-act="voiceTest">▶️ Tes suara</button>
-      ${list.length && !voice.hasIndonesian() ? '<p class="warn small">Perangkat ini belum punya suara Bahasa Indonesia, jadi logatnya mungkin aneh. Coba Chrome/Edge, atau pasang suara Indonesia di pengaturan sistem.</p>' : ''}` : ''}
+      ${voice.usingRecorded() ? '<p class="muted tiny">Suara rekaman tidak menyebut nama pemain; nama tetap tampil di layar.</p>' : ''}
+      ${!voice.usingRecorded() && list.length && !voice.hasIndonesian() ? '<p class="warn small">Perangkat ini belum punya suara Bahasa Indonesia, jadi logatnya mungkin aneh. Coba Chrome/Edge, atau pasang suara Indonesia di pengaturan sistem.</p>' : ''}` : ''}
       <p class="muted tiny">Suara diputar dari perangkat narator ini, jadi sambungkan ke speaker kalau main ramai-ramai.</p>
     </div>`;
   }
@@ -619,7 +621,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
         const dayKey = `${g.dayNumber}-${g.discussionEndsAt}`;
         if (rem <= 0 && g.discussionEndsAt !== null && timeUpSaid !== dayKey) {
           timeUpSaid = dayKey;
-          voice.say(TIME_UP_SCRIPT);
+          voice.say(TIME_UP_SCRIPT, 'time_up');
         }
         el.classList.toggle('low', rem <= 10);
       }
@@ -633,7 +635,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   delegate(app, handlers);
   app.addEventListener('change', (e) => {
     const el = e.target as HTMLSelectElement;
-    if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.stop(); voice.say('Halo, aku narator kalian malam ini.'); }
+    if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });
   voice.onChange(() => { if (!room?.game) render(); });
   setInterval(tick, 500);
