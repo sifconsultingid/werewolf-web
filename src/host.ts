@@ -350,6 +350,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     revote: () => guard(() => resetBallots(room!.game!)),
     finishDay: () => guard(() => finishDay(room!.game!)),
     toggleSecrets: () => { showSecrets = !showSecrets; render(); },
+    voiceUnlock: () => { voice.unlock(); render(); },
     voiceToggle: () => { voice.setEnabled(!voice.enabled); if (voice.enabled) voice.replay(); render(); },
     voiceReplay: () => { if (!voice.enabled) voice.setEnabled(true); voice.replay(); render(); },
     voiceRate: (arg) => { voice.setRate(Math.round((voice.rate + Number(arg)) * 100) / 100); render(); },
@@ -747,7 +748,9 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (!autoGame) document.body.dataset.phase = g?.phase ?? 'setup';
     const html = !room ? renderSetup() : !g ? renderLobby(room) : autoGame ? renderAutoBar(room, g) : renderGame(room, g);
     const screen = !room ? 'setup' : !g ? 'lobby' : autoGame ? 'auto' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
-    patch(hostRoot, autoGame ? `<div class="wrap host-auto">${html}</div>` : `${stars()}<main class="wrap host">${html}</main>`, screen);
+    const tapBanner = g && voice.enabled && voice.blocked
+      ? '<button class="btn primary block tap-sound" data-act="voiceUnlock">🔊 Ketuk untuk menyalakan suara narator</button>' : '';
+    patch(hostRoot, autoGame ? `<div class="wrap host-auto">${tapBanner}${html}</div>` : `${stars()}<main class="wrap host">${tapBanner}${html}</main>`, screen);
     const n = g ? narrationFor(g) : null;
     // Saat halaman baru dimuat (lanjutkan ruang), jangan langsung bicara; tombol 🔁 untuk mengulang.
     if (!voicePrimed) { voice.prime(n); voicePrimed = true; } else voice.narrate(n);
@@ -797,6 +800,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   delegate(hostRoot, handlers);
   // Wake Lock butuh interaksi pengguna; coba lagi setiap kali host mengetuk layar
   app.addEventListener('click', () => { void keepAwake(); });
+  // Safari iOS: suara baru boleh diputar setelah ada ketukan. Buka izinnya di ketukan apa pun.
+  for (const ev of ['touchend', 'click'] as const) document.addEventListener(ev, () => voice.unlock(), true);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { void keepAwake(); return; }
     // HP host dikunci / pindah aplikasi: jeda permainan (kecuali mode lokal, yang memang pindah-pindah tab)
@@ -809,7 +814,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const el = e.target as HTMLSelectElement;
     if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });
-  voice.onChange(() => { if (!room?.game) render(); });
+  voice.onChange(() => render());
   setInterval(tick, 500);
 
   if (room) {
