@@ -61,3 +61,24 @@ describe('Pencuri', () => {
     expect(victim.thief).toEqual({ stole: false, otherPid: undefined, stolenRole: 'seer' });
   });
 });
+
+describe('Pengumuman curian', () => {
+  it('pagi setelah malam 1 semua diberi tahu ada kartu dicuri (tanpa nama), lengkap dengan clip', async () => {
+    const { morningAnnouncement, THIEF_NOTICE } = await import('../src/game/engine');
+    const { narrationFor } = await import('../src/game/narration');
+    const g = gameWith(['thief', 'seer', 'werewolf', 'villager', 'villager']);
+    beginFirstRound(g);
+    commitStep(g, { target: 'p1' });
+    while (g.phase === 'night') commitStep(g, {});
+    expect(morningAnnouncement(g)).toContain(THIEF_NOTICE);
+    expect(narrationFor(g)!.lines.flatMap((l) => l.clips)).toContain('thief_swap');
+  });
+
+  it('tidak ada pengumuman kalau Pencuri tidak mencuri', async () => {
+    const { morningAnnouncement, THIEF_NOTICE } = await import('../src/game/engine');
+    const g = gameWith(['thief', 'seer', 'werewolf', 'villager', 'villager']);
+    beginFirstRound(g);
+    while (g.phase === 'night') commitStep(g, {});
+    expect(morningAnnouncement(g)).not.toContain(THIEF_NOTICE);
+  });
+});

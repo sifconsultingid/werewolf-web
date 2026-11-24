@@ -1,6 +1,6 @@
 // Layar pemain: masuk ke ruang, lihat kartu sendiri, lakukan aksi malam, voting.
 
-import { spellSentence, winnerSubtitle, winnerTitle, type SpellMode, type StepInput } from './game/engine';
+import { spellSentence, THIEF_NOTICE, winnerSubtitle, winnerTitle, type SpellMode, type StepInput } from './game/engine';
 import type { PlayerAction, PrivateView, PublicSeat, PublicView } from './game/room';
 import { ROLE_INFO, TEAM_NAME, WAKE_SCRIPT, type Role } from './game/roles';
 import type { Backend } from './net/backend';
@@ -302,6 +302,8 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     return `<p class="spell ${me ? 'me' : ''}">🤫 ${esc(spellSentence(s.mode, me ? 'Kamu' : nameOf(s.pid)))}</p>`;
   }
 
+  const stolenNotice = () => pub!.cardStolen ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : '';
+
   function hunterPublic(): string {
     let out = '';
     if (pub!.pendingHunter && pub!.pendingHunter !== priv?.pid) out += `<p class="center">🎯 <b>${esc(nameOf(pub!.pendingHunter))}</b> adalah Pemburu dan sedang membidik…</p>`;
@@ -335,10 +337,10 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         return `<div class="card"><h2>🌅 Pagi Hari ke-${p.dayNumber}</h2>
           ${p.lastDeaths.length ? deaths(p.lastDeaths) : '<p class="peace">☀️ Malam yang damai. Tidak ada yang mati.</p>'}
           ${p.lastRevived ? `<p class="good">🖐️ ${esc(nameOf(p.lastRevived))} bangkit kembali dari kematian!</p>` : ''}
-          ${spellNotice()}${hunterPublic()}</div>${seatsChips()}`;
+          ${stolenNotice()}${spellNotice()}${hunterPublic()}</div>${seatsChips()}`;
       case 'day': {
         const rem = discussionRemaining(p.discussionEndsAt, p.discussionPausedRemaining);
-        return `<div class="card center"><h2>☀️ Hari ${p.dayNumber} • Diskusi</h2>${spellNotice()}
+        return `<div class="card center"><h2>☀️ Hari ${p.dayNumber} • Diskusi</h2>${stolenNotice()}${spellNotice()}
           <div class="timer" data-timer>${fmtTime(rem)}</div>
           ${p.discussionPausedRemaining !== null ? '<p class="muted">⏸ Dijeda narator</p>' : ''}
           <p class="muted small">Diskusikan siapa yang mencurigakan. Voting dilakukan di HP masing-masing.</p></div>${seatsChips()}`;

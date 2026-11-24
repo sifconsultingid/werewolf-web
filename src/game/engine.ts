@@ -797,8 +797,16 @@ export function computeWinner(g: GameState): Winner | null {
 }
 
 /** Kalimat pengumuman pagi (untuk dibacakan narator). */
+export const THIEF_NOTICE = 'Semalam ada kartu yang dicuri! Seseorang di desa ini sudah bukan dirinya yang dulu.';
+
+/** Pagi setelah malam pertama: umumkan ke semua bahwa Pencuri beraksi (tanpa menyebut siapa). */
+export function cardStolenNotice(g: GameState): boolean {
+  return !!g.thiefSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
+}
+
 export function morningAnnouncement(g: GameState): string {
   let extra = '';
+  if (cardStolenNotice(g)) extra += ' ' + THIEF_NOTICE;
   const r = player(g, g.lastRevived);
   if (r) extra += ` ${r.name} bangkit kembali dari kematian!`;
   const s = player(g, g.spellTarget);

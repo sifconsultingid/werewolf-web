@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import {
   balanceScore, beginFirstRound, changeCount, commitStep, computeWinner, currentStep, DEFAULT_SETTINGS,
   eligibleVoters, execute, finishDay, goToDiscussion, goToVote, hunterShoots, MAX_PLAYERS, MIN_PLAYERS,
-  morningAnnouncement, player, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
+  cardStolenNotice, morningAnnouncement, player, THIEF_NOTICE, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
   winnerSubtitle, winnerTitle, autoAssignRoles, type GameState, type Settings,
 } from './game/engine';
 import {
@@ -634,6 +634,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${g.lastDeaths.length ? deathList(g, g.lastDeaths) : '<p class="peace">☀️ Malam yang damai. Tidak ada yang mati.</p>'}
       ${g.lastRevived ? `<p class="good">🖐️ ${esc(player(g, g.lastRevived)?.name)} bangkit kembali!</p>` : ''}
       ${spelled && spelled.isAlive ? `<p class="spell">🤫 ${esc(spellSentence(g.spellMode, spelled.name))}</p>` : ''}
+      ${cardStolenNotice(g) ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : ''}
     </div>
     ${hunterBlock(g)}
     <button class="btn primary block" data-act="toDiscussion" ${pending ? 'disabled' : ''}>

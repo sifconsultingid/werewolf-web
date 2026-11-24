@@ -4,7 +4,7 @@
 
 import {
   alivePlayers, autoAssignRoles, castVote, commitStep, createGame, currentStep, DEFAULT_SETTINGS,
-  eligibleVoters, hunterShoots, insomniacPeek, morningAnnouncement, seerPeek, player, stepCandidates, votes,
+  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, morningAnnouncement, seerPeek, player, stepCandidates, votes,
   type DeathCause, type GameState, type Phase, type Rng, type Settings, type SpellMode, type StepInput,
   type Winner, MAX_PLAYERS,
 } from './engine';
@@ -291,6 +291,8 @@ export interface PublicView {
   winner: Winner | null;
   lovers: string[];
   announcement: string | null;
+  /** Pencuri beraksi semalam (diumumkan ke semua, tanpa nama) */
+  cardStolen?: boolean;
   /** Mode narator otomatis */
   auto?: {
     paused: boolean;
@@ -415,6 +417,7 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
     winner: g.winner,
     lovers: g.phase === 'gameOver' ? g.lovers : [],
     announcement: g.phase === 'morning' ? morningAnnouncement(g) : null,
+    cardStolen: cardStolenNotice(g) || undefined,
     auto: room.auto ? {
       paused: room.auto.paused,
       endsAt: publicDeadline(g, room.auto),

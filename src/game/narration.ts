@@ -2,7 +2,7 @@
 // Fungsi di sini murni (tanpa DOM) agar mudah dites.
 
 import {
-  DEATH_CAUSE_TEXT, morningAnnouncement, player, spellSentence, winnerSubtitle, winnerTitle,
+  cardStolenNotice, DEATH_CAUSE_TEXT, morningAnnouncement, player, spellSentence, winnerSubtitle, winnerTitle,
   type DeathEvent, type GameState,
 } from './engine';
 import { ROLE_INFO, sleepScript, WAKE_SCRIPT } from './roles';
@@ -62,6 +62,7 @@ function morningClips(g: GameState): string[] {
   }
   if (player(g, g.lastRevived)) out.push('revived');
   if (player(g, g.spellTarget)) out.push(`spell_${g.spellMode}`);
+  if (cardStolenNotice(g)) out.push('thief_swap');
   return out;
 }
 
