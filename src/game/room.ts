@@ -4,7 +4,7 @@
 
 import {
   alivePlayers, autoAssignRoles, castVote, commitStep, createGame, currentStep, DEFAULT_SETTINGS,
-  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, morningAnnouncement, seerPeek, player, stepCandidates, votes,
+  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, cardsSwappedNotice, morningAnnouncement, seerPeek, player, stepCandidates, votes,
   type DeathCause, type GameState, type Phase, type Rng, type Settings, type SpellMode, type StepInput,
   type Winner, MAX_PLAYERS,
 } from './engine';
@@ -210,6 +210,10 @@ function sanitizeInput(raw: StepInput | undefined): StepInput {
     const [a, b] = i.lovers.map(str);
     if (a && b) out.lovers = [a, b];
   }
+  if (Array.isArray(i.swap) && i.swap.length === 2) {
+    const [a, b] = i.swap.map(str);
+    if (a && b) out.swap = [a, b];
+  }
   if (str(i.target)) out.target = i.target;
   if (typeof i.heal === 'boolean') out.heal = i.heal;
   if (i.poison === null || str(i.poison)) out.poison = i.poison ?? null;
@@ -293,6 +297,8 @@ export interface PublicView {
   announcement: string | null;
   /** Thief beraksi semalam (diumumkan ke semua, tanpa nama) */
   cardStolen?: boolean;
+  /** Troublemaker beraksi semalam (diumumkan ke semua, tanpa nama) */
+  cardsSwapped?: boolean;
   /** Mode narator otomatis */
   auto?: {
     paused: boolean;
@@ -343,6 +349,8 @@ export interface PrivateView {
   insomniacHistory?: { night: number; walked: boolean; nearestWolves: string[] }[];
   /** Thief: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
   thief?: { stole: boolean; otherPid?: string; stolenRole: Role };
+  /** Troublemaker: dua orang yang kamu tukar (tanpa kartunya) / korban: peran barumu (tanpa nama pelaku) */
+  troublemaker?: { swapped: string[] } | { newRole: Role };
   action?: ActionPrompt | null;
   updatedAt: number;
 }
@@ -418,6 +426,7 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
     lovers: g.phase === 'gameOver' ? g.lovers : [],
     announcement: g.phase === 'morning' ? morningAnnouncement(g) : null,
     cardStolen: cardStolenNotice(g) || undefined,
+    cardsSwapped: cardsSwappedNotice(g) || undefined,
     auto: room.auto ? {
       paused: room.auto.paused,
       endsAt: publicDeadline(g, room.auto),
@@ -494,6 +503,13 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
     const stole = swap.thiefId === me.id;
     // Korban tidak diberi tahu siapa Thiefnya
     view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole };
+  }
+  const tm = g.troublemakerSwap;
+  if (tm) {
+    const idx = tm.pids.indexOf(me.id);
+    // Korban baru tahu saat pagi; Troublemaker tahu siapa yang ditukar tapi tidak melihat kartunya
+    if (idx >= 0 && tm.applied && tm.newRoles) view.troublemaker = { newRole: tm.newRoles[idx] };
+    else if (tm.troublemakerId === me.id) view.troublemaker = { swapped: [...tm.pids] };
   }
   if (me.role === 'insomniac') {
     view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));

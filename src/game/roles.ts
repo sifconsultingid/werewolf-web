@@ -18,7 +18,7 @@ export const TEAM_COLOR: Record<Team, string> = {
 export const ROLES = [
   'werewolf', 'villager', 'seer', 'bodyguard', 'witch', 'hunter', 'prince',
   'diseased', 'necromancer', 'spellcaster', 'insomniac', 'lycan',
-  'cupid', 'tanner', 'thief',
+  'cupid', 'tanner', 'thief', 'troublemaker',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -129,8 +129,14 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
   thief: {
     name: 'Thief', team: 'village', icon: '🦹', colors: [rgb(0.15, 0.15, 0.18), rgb(0.6, 0.6, 0.7)],
     balance: -1, allowsMultiple: false, nightOrder: 8, looksLikeWerewolf: false,
-    short: 'Malam pertama (paling akhir) boleh mencuri kartu satu pemain. Mulai pagi, kamu jadi peran itu dan dia jadi Villager. Kalau tidak mencuri, kamu warga biasa.',
+    short: 'Malam pertama (setelah peran lain) boleh mencuri kartu satu pemain. Mulai pagi, kamu jadi peran itu dan dia jadi Villager. Kalau tidak mencuri, kamu warga biasa.',
     tips: 'Curi kartu yang kuat—tapi hati-hati, kalau mencuri Werewolf kamu pindah ke Tim Serigala!',
+  },
+  troublemaker: {
+    name: 'Troublemaker', team: 'village', icon: '🃏', colors: [rgb(0.55, 0.2, 0.45), rgb(0.95, 0.6, 0.3)],
+    balance: -1, allowsMultiple: false, nightOrder: 9, looksLikeWerewolf: false,
+    short: 'Malam pertama (setelah Thief) boleh menukar kartu dua pemain lain tanpa melihatnya. Mulai pagi, mereka saling jadi peran satu sama lain. Kamu tetap Tim Desa.',
+    tips: 'Kacaukan rencana serigala—tapi kamu sendiri tidak tahu kartu siapa yang pindah ke mana!',
   },
 };
 
@@ -138,6 +144,7 @@ export type RoleCounts = Partial<Record<Role, number>>;
 
 export const WAKE_SCRIPT: Partial<Record<Role, string>> = {
   thief: 'Thief, bangunlah. Tunjuk satu orang yang kartunya ingin kamu curi, atau tetap jadi warga biasa.',
+  troublemaker: 'Troublemaker, bangunlah. Tunjuk dua orang yang kartunya ingin kamu tukar, atau biarkan saja.',
   cupid: 'Cupid, bangunlah. Tunjuk dua orang yang akan saling jatuh cinta.',
   bodyguard: 'Bodyguard, bangunlah. Siapa yang ingin kamu lindungi malam ini?',
   werewolf: 'Para serigala, bangunlah. Sepakati satu korban yang akan kalian mangsa malam ini.',
