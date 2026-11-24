@@ -381,7 +381,11 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (h?.walked) {
       return `<div class="result">${h.nearestWolves.length ? `🐺 Werewolf terdekat: <b>${h.nearestWolves.map((w) => esc(nameOf(w))).join(' / ')}</b>` : 'Tidak ada werewolf di dekatmu.'}</div>`;
     }
-    if (n === 1 && priv?.thief) return `<div class="result">${thiefNote(priv.thief)}</div>`;
+    if (n === 1 && priv?.thief) {
+      // Korban mungkin buka mata saat perannya yang lama dipanggil narator → suruh langsung tidur lagi
+      const back = priv.thief.stole ? '' : '<div class="big"><b>😴 Tutup matamu lagi sekarang, jangan bersuara.</b></div>';
+      return `<div class="result">${thiefNote(priv.thief)}${back}</div>`;
+    }
     if (n === 1 && priv?.lover) return `<div class="result">💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>!</div>`;
     return '';
   }
