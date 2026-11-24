@@ -128,8 +128,8 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
   },
   thief: {
     name: 'Pencuri', team: 'village', icon: '🦹', colors: [rgb(0.15, 0.15, 0.18), rgb(0.6, 0.6, 0.7)],
-    balance: -1, allowsMultiple: false, nightOrder: -1, looksLikeWerewolf: false,
-    short: 'Malam pertama boleh mencuri kartu satu pemain: kamu jadi peran itu, dan dia jadi Warga Desa. Kalau tidak mencuri, kamu warga biasa.',
+    balance: -1, allowsMultiple: false, nightOrder: 8, looksLikeWerewolf: false,
+    short: 'Malam pertama (paling akhir) boleh mencuri kartu satu pemain. Mulai pagi, kamu jadi peran itu dan dia jadi Warga Desa. Kalau tidak mencuri, kamu warga biasa.',
     tips: 'Curi kartu yang kuat—tapi hati-hati, kalau mencuri Werewolf kamu pindah ke Tim Serigala!',
   },
 };

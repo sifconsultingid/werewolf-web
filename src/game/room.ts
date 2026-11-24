@@ -489,7 +489,8 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (me.role === 'cupid' && g.lovers.length) view.coupled = [...g.lovers];
   if (me.role === 'seer') view.seerHistory = g.seerHistory.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
   const swap = g.thiefSwap;
-  if (swap && (swap.thiefId === me.id || swap.targetId === me.id)) {
+  // Korban baru tahu saat pagi (kartu ditukar saat pagi); Pencuri langsung tahu curiannya
+  if (swap && (swap.thiefId === me.id || (swap.applied && swap.targetId === me.id))) {
     const stole = swap.thiefId === me.id;
     // Korban tidak diberi tahu siapa Pencurinya
     view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole };

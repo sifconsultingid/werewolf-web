@@ -92,7 +92,11 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export interface SeerResult { night: number; targetId: string; isWolf: boolean }
 /** Pencuri menukar kartu di malam pertama */
-export interface ThiefSwap { thiefId: string; targetId: string; stolenRole: Role }
+export interface ThiefSwap {
+  thiefId: string; targetId: string; stolenRole: Role;
+  /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight) */
+  applied: boolean;
+}
 export interface InsomniacResult { night: number; walked: boolean; nearestWolfIds: string[] }
 
 export interface GameState {
@@ -567,21 +571,32 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
 }
 
 /**
- * Pencuri mengambil kartu target: Pencuri menjadi peran target, target menjadi Warga Desa.
- * Dipanggil di langkah pertama malam pertama, jadi peran curian masih sempat beraksi malam itu.
+ * Pencuri memilih kartu yang dicuri. Pencuri bangun paling akhir di malam pertama, dan kartunya baru
+ * ditukar saat pagi (applyThiefSwap), jadi malam itu semua peran beraksi dengan pemilik aslinya
+ * dan tidak ada yang "terbangun sia-sia".
  */
 function thiefSteal(g: GameState, targetId: string): void {
   const thief = g.players.find((p) => p.role === 'thief' && p.isAlive);
   const target = player(g, targetId);
   if (!thief || !target) return;
-  const stolen = target.role;
-  thief.role = stolen;
+  g.thiefSwap = { thiefId: thief.id, targetId: target.id, stolenRole: target.role, applied: false };
+}
+
+function applyThiefSwap(g: GameState): void {
+  const s = g.thiefSwap;
+  if (!s || s.applied) return;
+  const thief = player(g, s.thiefId);
+  const target = player(g, s.targetId);
+  s.applied = true;
+  if (!thief || !target) return;
+  s.stolenRole = target.role;
+  thief.role = target.role;
   target.role = 'villager';
-  g.thiefSwap = { thiefId: thief.id, targetId: target.id, stolenRole: stolen };
-  g.log.push({ text: `${thief.name} mencuri kartu ${ROLE_INFO[stolen].name} dari ${target.name}`, icon: ROLE_INFO.thief.icon });
+  g.log.push({ text: `${thief.name} mencuri kartu ${ROLE_INFO[s.stolenRole].name} dari ${target.name}`, icon: ROLE_INFO.thief.icon });
 }
 
 export function resolveNight(g: GameState, now = Date.now()): void {
+  applyThiefSwap(g);
   const killed: [string, DeathCause][] = [];
   if (g.wolfTarget) {
     const isProtected = g.protectedTonight === g.wolfTarget;

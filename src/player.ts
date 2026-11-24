@@ -171,7 +171,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
   function thiefNote(t: NonNullable<PrivateView['thief']>): string {
     const r = ROLE_INFO[t.stolenRole];
     return t.stole
-      ? `🦹 Kamu mencuri kartu <b>${esc(nameOf(t.otherPid))}</b>: sekarang kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`
+      ? `🦹 Kamu mencuri kartu <b>${esc(nameOf(t.otherPid))}</b>: ${pub?.phase === 'night' ? 'mulai pagi ini' : 'sekarang'} kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`
       : `🦹 Kartumu (${r.icon} ${esc(r.name)}) dicuri Pencuri! Sekarang kamu <b>Warga Desa</b>.`;
   }
 
@@ -275,7 +275,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         }
         break;
       case 'thief':
-        body = `<p class="center small">Kamu akan jadi peran orang itu, dan dia jadi Warga Desa. Peran curianmu belum kelihatan sampai kamu mencuri.</p>
+        body = `<p class="center small">Mulai pagi, kamu jadi peran orang itu dan dia jadi Warga Desa. Peran curianmu baru kelihatan setelah kamu mencuri.</p>
           ${grid(a.candidates, 'sel1', { tint: '#9aa0b4' })}
           ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Tidak mencuri', true)}`;
         break;
@@ -382,9 +382,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
       return `<div class="result">${h.nearestWolves.length ? `🐺 Werewolf terdekat: <b>${h.nearestWolves.map((w) => esc(nameOf(w))).join(' / ')}</b>` : 'Tidak ada werewolf di dekatmu.'}</div>`;
     }
     if (n === 1 && priv?.thief) {
-      // Korban mungkin buka mata saat perannya yang lama dipanggil narator → suruh langsung tidur lagi
-      const back = priv.thief.stole ? '' : '<div class="big"><b>😴 Tutup matamu lagi sekarang, jangan bersuara.</b></div>';
-      return `<div class="result">${thiefNote(priv.thief)}${back}</div>`;
+      return `<div class="result">${thiefNote(priv.thief)}</div>`;
     }
     if (n === 1 && priv?.lover) return `<div class="result">💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>!</div>`;
     return '';
