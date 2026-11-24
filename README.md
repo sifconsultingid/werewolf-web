@@ -41,6 +41,31 @@ Uji coba di HP sungguhan dalam satu Wi-Fi juga bisa untuk *melihat tampilan* (`n
 memakai `--host`, buka alamat Network yang tercetak), tapi di mode lokal setiap browser terpisah,
 jadi HP lain tidak bisa saling terhubung sebelum mode online diaktifkan.
 
+## Mode host ikut main (narator otomatis)
+
+Default di layar **Buat Permainan**: toggle **🙋 Saya ikut main (narator otomatis)** + isi nama.
+Pembuat ruang (host) dapat kursi dan peran acak seperti pemain lain, dan layar HP-nya jadi layar
+pemain biasa plus bar kecil (🔊/🔁, ⏸ Jeda / ▶️ Lanjut, 🔁 Main lagi, Tutup). Tidak ada info rahasia di layar host.
+Narator dijalankan `src/game/auto.ts` (`autoTick()` dipanggil tiap 0,5 detik di HP host), dan suaranya diputar dari HP host:
+
+| Tahap | Lanjut otomatis ketika |
+|-------|-------------------------|
+| Lihat kartu | semua menekan Siap (+2 dtk) atau batas waktu (default 60 dtk) |
+| Tiap peran malam | aksi dikirim **dan** durasi minimum acak 9–15 dtk lewat, atau batas waktu (30 dtk) → dilewati. Peran yang sudah mati: 10–20 dtk acak, jadi lamanya langkah tidak membocorkan apa-apa |
+| Serigala | semua serigala hidup sepakat; tidak sepakat sampai waktu habis = **tidak ada korban** |
+| Pagi | narasi selesai + 4 dtk → diskusi (atau voting) |
+| Diskusi | timer diskusi habis |
+| Voting | semua memilih (+3 dtk) atau batas waktu (60 dtk). Seri → voting ulang sekali, seri lagi → tidak ada eksekusi |
+| Pemburu | menembak, atau batas waktu (20 dtk) → tidak menembak |
+
+Timer tiap tahap baru mulai setelah voice-over selesai membacakan narasinya. Batas waktu bisa diubah
+di kartu "Batas waktu narator otomatis". Mode lama (narator tidak ikut main, tombol manual) tetap ada:
+matikan toggle-nya.
+
+Catatan: HP host tetap memegang state lengkap (bisa diintip lewat DevTools). Layar HP host dijaga tetap
+menyala (Screen Wake Lock), permainan otomatis dijeda kalau HP host dikunci/pindah aplikasi atau halaman
+host dibuka ulang, dan pemain melihat "Koneksi ke host terputus" kalau detak host (tiap 10 dtk) hilang > 25 dtk.
+
 ## Tes
 
 ```bash

@@ -13,8 +13,10 @@ import {
   removeSeat, startGame, syncAutoCounts, type PlayerAction, type Room,
 } from './game/room';
 import { ROLES, ROLE_INFO, sleepScript, WAKE_SCRIPT, type Role, type RoleCounts } from './game/roles';
+import { autoTick, DEFAULT_TIMINGS, setPaused, type AutoTimings } from './game/auto';
 import { HUNTER_SCRIPT, narrationFor, NIGHT_FALLS, MORNING_COMES, TIME_UP_SCRIPT, VOTE_SCRIPT } from './game/narration';
-import type { Backend } from './net/backend';
+import type { Backend, Unsub } from './net/backend';
+import { startPlayer } from './player';
 import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, teamTag,
 } from './ui/common';
@@ -30,11 +32,51 @@ export function savedHostRoom(): string | null {
   } catch { return null; }
 }
 
-interface SetupDraft { expected: number; counts: RoleCounts; auto: boolean; settings: Settings }
+interface SetupDraft {
+  expected: number; counts: RoleCounts; auto: boolean; settings: Settings;
+  /** Host ikut bermain, narator dijalankan sistem */
+  hostPlays: boolean; timings: AutoTimings;
+}
+
+/** Backend semu untuk layar pemain milik host: data langsung dari memori, aksi langsung diproses. */
+function loopback(uid: string, onAction: (a: unknown) => void) {
+  let pubCb: ((d: unknown) => void) | null = null;
+  let privCb: ((d: unknown) => void) | null = null;
+  let lastPub: unknown = null;
+  let lastPriv: unknown = null;
+  const noop: Unsub = () => {};
+  return {
+    label: 'Host', localOnly: false,
+    uid: async () => uid,
+    onActions: () => noop,
+    publishPublic: async () => {},
+    publishPrivate: async () => {},
+    watchPublic: (_c: string, cb: (d: unknown) => void) => { pubCb = cb; if (lastPub) queueMicrotask(() => cb(lastPub)); return () => { pubCb = null; }; },
+    watchPrivate: (_c: string, _u: string, cb: (d: unknown) => void) => { privCb = cb; if (lastPriv) queueMicrotask(() => cb(lastPriv)); return () => { privCb = null; }; },
+    sendAction: async (_c: string, a: unknown) => { onAction(a); },
+    push(pub: unknown, priv: unknown) {
+      lastPub = pub; lastPriv = priv;
+      pubCb?.(pub); privCb?.(priv);
+    },
+  } satisfies Backend & { push(pub: unknown, priv: unknown): void };
+}
+
+const HOST_NAME_KEY = 'ww:name';
 
 export function startHost(app: HTMLElement, backend: Backend, resumeCode: string | null): void {
   let room: Room | null = null;
-  let draft: SetupDraft = { expected: 8, counts: autoAssignRoles(8), auto: true, settings: { ...DEFAULT_SETTINGS } };
+  let draft: SetupDraft = {
+    expected: 8, counts: autoAssignRoles(8), auto: true, settings: { ...DEFAULT_SETTINGS },
+    hostPlays: true, timings: { ...DEFAULT_TIMINGS },
+  };
+  // Dua area: kontrol host, dan layar pemain milik host (mode host ikut main)
+  app.innerHTML = '<div id="host-root"></div><div id="player-root" hidden></div>';
+  const hostRoot = app.querySelector<HTMLElement>('#host-root')!;
+  const playerRoot = app.querySelector<HTMLElement>('#player-root')!;
+  let loop: ReturnType<typeof loopback> | null = null;
+  let speakingSince = 0;
+  let lastBeat = 0;
+  let wakeLock: { release(): Promise<void> } | null = null;
   let showSecrets = true;
   let qrUrl = '';
   let unsubActions: (() => void) | null = null;
@@ -50,6 +92,31 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       const raw = localStorage.getItem(STORE(resumeCode));
       if (raw) room = JSON.parse(raw) as Room;
     } catch { /* abaikan */ }
+    // Halaman host dibuka ulang di tengah permainan: jeda dulu, host menekan Lanjut
+    // (sekaligus memberi izin browser untuk memutar suara).
+    if (room?.game && room.auto) setPaused(room.game, room.auto, true, Date.now());
+  }
+
+  const isAuto = () => !!room?.autoNarrator;
+
+  function ensurePlayerView() {
+    if (!room?.autoNarrator || !room.hostUid || loop) return;
+    loop = loopback(room.hostUid, (a) => {
+      if (!room) return;
+      applyPlayerAction(room, room.hostUid!, a as PlayerAction);
+      commit();
+    });
+    startPlayer(playerRoot, loop, room.code);
+  }
+
+  async function keepAwake() {
+    const nav = navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void>; addEventListener(e: string, f: () => void): void }> } };
+    if (!room || wakeLock || !nav.wakeLock || document.visibilityState !== 'visible') return;
+    try {
+      const lock = await nav.wakeLock.request('screen');
+      wakeLock = lock;
+      lock.addEventListener('release', () => { wakeLock = null; });
+    } catch { /* tidak didukung / ditolak */ }
   }
 
   const joinLink = () => {
@@ -75,7 +142,9 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       lastSent.set('*', stripTime(pub));
       await backend.publishPublic(room.code, JSON.parse(pub));
     }
+    if (loop && room.hostUid) loop.push(JSON.parse(pub), buildPrivateView(room, room.hostUid, now));
     const uids = new Set<string>([...room.seats.map((s) => s.uid), ...Object.keys(room.notices), ...knownUids]);
+    if (room.hostUid) uids.delete(room.hostUid); // layar pemain host dilayani lewat loopback
     for (const uid of uids) {
       const priv = JSON.stringify(buildPrivateView(room, uid, now));
       if (lastSent.get(uid) !== stripTime(priv)) {
@@ -116,7 +185,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const g = room?.game;
     const step = g ? currentStep(g) : undefined;
     const key = g && step ? `${g.nightNumber}-${g.stepIndex}` : '';
-    if (!step || step.active) {
+    if (!step || step.active || isAuto()) {
       if (autoTimer) { clearTimeout(autoTimer.handle); autoTimer = null; }
       return;
     }
@@ -182,16 +251,44 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       }
       room ? commit() : render();
     },
-    createRoom: () => {
+    hostPlays: () => { draft.hostPlays = !draft.hostPlays; render(); },
+    timing: (arg, el) => {
+      const t = room?.timings ?? draft.timings;
+      const k = arg as keyof AutoTimings;
+      t[k] = Math.max(10, Math.min(300, t[k] + Number(el.dataset.delta)));
+      room ? commit() : render();
+    },
+    createRoom: async () => {
+      let hostName = '';
+      if (draft.hostPlays) {
+        const input = document.getElementById('host-name') as HTMLInputElement | null;
+        hostName = input?.value.trim() ?? '';
+        if (!hostName) { input?.focus(); toast('Isi namamu dulu'); return; }
+        try { localStorage.setItem(HOST_NAME_KEY, hostName); } catch { /* */ }
+      }
       const code = randomCode();
-      room = createRoom(code, draft.expected, draft.settings);
-      room.counts = draft.counts;
-      room.autoCounts = draft.auto;
+      const r = createRoom(code, draft.expected, draft.settings, { autoNarrator: draft.hostPlays, timings: draft.timings });
+      r.counts = draft.counts;
+      r.autoCounts = draft.auto;
+      if (draft.hostPlays) {
+        const uid = await backend.uid();
+        applyPlayerAction(r, uid, { type: 'join', name: hostName });
+        r.hostUid = uid;
+        r.autoCounts = draft.auto;
+        if (draft.auto) r.counts = draft.counts; // jangan pakai komposisi 1 pemain
+      }
+      room = r;
       history.replaceState(null, '', `?host=${code}`);
       listen();
       makeQr();
+      void keepAwake();
       commit();
     },
+    pause: () => guard(() => {
+      if (!room?.game || !room.auto) return;
+      setPaused(room.game, room.auto, !room.auto.paused, Date.now());
+      if (!room.auto.paused) voice.replay();
+    }),
     copyLink: async () => {
       try { await navigator.clipboard.writeText(joinLink()); toast('Link disalin'); } catch { prompt('Salin link ini:', joinLink()); }
     },
@@ -205,6 +302,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       const err = setupError(room.seats.length, room.counts);
       if (err) throw new Error(err);
       startGame(room);
+      void keepAwake();
     }),
     beginRound: () => guard(() => beginFirstRound(room!.game!)),
     skipStep: () => {
@@ -362,8 +460,34 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       <button class="btn small ghost" data-act="voiceReplay" title="Bacakan ulang narasi">🔁</button>`;
   }
 
+  function hostModeCard(): string {
+    let saved = '';
+    try { saved = localStorage.getItem(HOST_NAME_KEY) ?? ''; } catch { /* */ }
+    return `<div class="card"><h3>Cara main</h3>
+      <label class="toggle"><input type="checkbox" data-act="hostPlays" ${draft.hostPlays ? 'checked' : ''}><span>🙋 Saya ikut main (narator otomatis)</span></label>
+      ${draft.hostPlays
+        ? `<p class="muted small">Kamu dapat peran acak seperti pemain lain. Narator dijalankan sistem dan suaranya diputar dari HP ini.</p>
+          <label class="field"><span>Nama kamu</span><input id="host-name" maxlength="20" autocomplete="nickname" placeholder="mis. Budi" value="${esc(saved)}"></label>`
+        : '<p class="muted small">Kamu jadi narator dan tidak ikut main. Layar ini menampilkan semua peran dan tombol untuk memandu permainan.</p>'}
+    </div>`;
+  }
+
+  function timingsCard(t: AutoTimings): string {
+    const row = (k: keyof AutoTimings, label: string) => `<div class="row between"><span>${label}</span><div class="stepper">
+      <button data-act="timing" data-arg="${k}" data-delta="-10">−</button><span>${t[k]} dtk</span>
+      <button data-act="timing" data-arg="${k}" data-delta="10">+</button></div></div>`;
+    return `<div class="card"><h3>⏱️ Batas waktu narator otomatis</h3>
+      ${row('revealSeconds', 'Lihat kartu & siap')}
+      ${row('nightStepSeconds', 'Tiap peran malam')}
+      ${row('voteSeconds', 'Voting')}
+      ${row('hunterSeconds', 'Pemburu menembak')}
+      <p class="muted tiny">Pemain yang tidak merespons sampai waktu habis dilewati. Serigala yang tidak sepakat = tidak ada korban. Voting seri diulang sekali, seri lagi = tidak ada eksekusi.</p>
+    </div>`;
+  }
+
   function renderSetup(): string {
-    return `<header class="hero"><div class="title">WEREWOLF</div><div class="subtitle">Mode Narator</div></header>
+    return `<header class="hero"><div class="title">WEREWOLF</div><div class="subtitle">Buat Permainan</div></header>
+      ${hostModeCard()}
       <div class="card"><h3>Perkiraan jumlah pemain</h3>
         <div class="row center big-stepper"><button class="btn round" data-act="expected" data-arg="-1">−</button>
         <span class="big-num">${draft.expected}</span><button class="btn round" data-act="expected" data-arg="1">+</button></div>
@@ -371,6 +495,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       </div>
       ${compositionEditor(draft.counts, draft.expected, draft.auto)}
       ${settingsCard(draft.settings)}
+      ${draft.hostPlays ? timingsCard(draft.timings) : ''}
       ${voiceCard()}
       <button class="btn primary block" data-act="createRoom">🌕 Buat Ruang</button>
       <p class="muted small center">Mode realtime: ${esc(backend.label)}</p>`;
@@ -395,17 +520,19 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
           <div class="card">
             <h3>Pemain masuk (${n})</h3>
             ${n === 0 ? '<p class="muted">Belum ada pemain. Bagikan link atau QR di atas.</p>' : ''}
-            <ol class="seat-list">${r.seats.map((s, i) => `<li><span class="seat-no">${i + 1}</span><span class="grow">${esc(s.name)}</span>
+            <ol class="seat-list">${r.seats.map((s, i) => `<li><span class="seat-no">${i + 1}</span><span class="grow">${esc(s.name)}${s.uid === r.hostUid ? ' <span class="muted small">(kamu, host)</span>' : ''}</span>
               <button class="icon" data-act="up" data-arg="${s.pid}" ${i === 0 ? 'disabled' : ''} title="Naik">▲</button>
               <button class="icon" data-act="down" data-arg="${s.pid}" ${i === n - 1 ? 'disabled' : ''} title="Turun">▼</button>
-              <button class="icon danger" data-act="kick" data-arg="${s.pid}" title="Keluarkan">✕</button></li>`).join('')}</ol>
+              ${s.uid === r.hostUid ? '<span class="icon"></span>' : `<button class="icon danger" data-act="kick" data-arg="${s.pid}" title="Keluarkan">✕</button>`}</li>`).join('')}</ol>
             <p class="muted tiny">Urutan ini = urutan duduk melingkar (dipakai Insomnia untuk mencari Werewolf terdekat).</p>
           </div>
         </div>
         <div>
           ${compositionEditor(r.counts, n, r.autoCounts)}
           ${settingsCard(r.settings)}
+          ${r.autoNarrator ? timingsCard(r.timings ?? DEFAULT_TIMINGS) : ''}
           ${voiceCard()}
+          ${r.autoNarrator ? '<p class="muted small">🤖 Narator otomatis: setelah Mulai, permainan berjalan sendiri. Kamu main dari layar ini seperti pemain lain. Jangan kunci layar HP ini.</p>' : ''}
           <button class="btn primary block" data-act="start" ${err ? 'disabled' : ''}>🎲 Mulai &amp; Acak Peran</button>
           ${err ? `<p class="muted small center">${esc(err)}</p>` : ''}
         </div>
@@ -600,12 +727,27 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       <div class="grid2 game"><div>${main}</div><div>${secretsPanel(g)}</div></div>`;
   }
 
+  /** Mode host ikut main: hanya bar kontrol kecil, tanpa info rahasia apa pun. */
+  function renderAutoBar(r: Room, g: GameState): string {
+    const paused = !!r.auto?.paused;
+    const over = g.phase === 'gameOver';
+    return `<header class="topbar host-bar"><div><b>🤖 Ruang ${esc(r.code)}</b> <span class="muted small">narator otomatis</span></div>
+      <div class="row">${voiceControls()}
+      ${over ? '<button class="btn small primary" data-act="playAgain">🔁 Main lagi</button>'
+        : `<button class="btn small ${paused ? 'primary' : ''}" data-act="pause">${paused ? '▶️ Lanjut' : '⏸ Jeda'}</button>`}
+      <button class="btn small ghost" data-act="endRoom">Tutup</button></div></header>
+      ${paused ? '<p class="warn small center">Permainan dijeda. Tekan ▶️ Lanjut untuk meneruskan.</p>' : '<p class="muted tiny center">Suara narator diputar dari HP ini. Jangan kunci layar.</p>'}`;
+  }
+
   function render() {
-    document.body.dataset.phase = room?.game?.phase ?? 'setup';
-    const html = !room ? renderSetup() : !room.game ? renderLobby(room) : renderGame(room, room.game);
     const g = room?.game;
-    const screen = !room ? 'setup' : !g ? 'lobby' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
-    patch(app, `${stars()}<main class="wrap host">${html}</main>`, screen);
+    const autoGame = !!(room && g && room.autoNarrator);
+    if (autoGame) ensurePlayerView();
+    playerRoot.hidden = !autoGame;
+    if (!autoGame) document.body.dataset.phase = g?.phase ?? 'setup';
+    const html = !room ? renderSetup() : !g ? renderLobby(room) : autoGame ? renderAutoBar(room, g) : renderGame(room, g);
+    const screen = !room ? 'setup' : !g ? 'lobby' : autoGame ? 'auto' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
+    patch(hostRoot, autoGame ? `<div class="wrap host-auto">${html}</div>` : `${stars()}<main class="wrap host">${html}</main>`, screen);
     const n = g ? narrationFor(g) : null;
     // Saat halaman baru dimuat (lanjutkan ruang), jangan langsung bicara; tombol 🔁 untuk mengulang.
     if (!voicePrimed) { voice.prime(n); voicePrimed = true; } else voice.narrate(n);
@@ -614,26 +756,56 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
 
   function tick() {
     const g = room?.game;
-    app.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
+    if (g && g.phase === 'day' && g.discussionEndsAt !== null) {
+      const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
+      const dayKey = `${g.dayNumber}-${g.discussionEndsAt}`;
+      if (rem <= 0 && timeUpSaid !== dayKey) {
+        timeUpSaid = dayKey;
+        voice.say(TIME_UP_SCRIPT, 'time_up');
+      }
+    }
+    if (room && g && room.auto) {
+      const now = Date.now();
+      // Pengaman: jika status "sedang bicara" macet, jangan tahan permainan lebih dari 30 detik
+      const talking = voice.isSpeaking();
+      if (!talking) speakingSince = 0;
+      else if (!speakingSince) speakingSince = now;
+      const speaking = talking && now - speakingSince < 30000;
+      let changed = false;
+      try { changed = autoTick(g, room.auto, now, { speaking, timings: room.timings }); } catch (e) { console.error(e); }
+      if (changed) commit();
+    }
+    // Detak: kirim ulang tampilan publik berkala supaya pemain tahu host masih tersambung
+    if (room && Date.now() - lastBeat > 10000) {
+      lastBeat = Date.now();
+      lastSent.delete('*');
+      publish().catch(() => { /* dicoba lagi di detak berikutnya */ });
+    }
+    hostRoot.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       if (g) {
         const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
         el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
-        const dayKey = `${g.dayNumber}-${g.discussionEndsAt}`;
-        if (rem <= 0 && g.discussionEndsAt !== null && timeUpSaid !== dayKey) {
-          timeUpSaid = dayKey;
-          voice.say(TIME_UP_SCRIPT, 'time_up');
-        }
         el.classList.toggle('low', rem <= 10);
       }
     });
-    app.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
+    hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
       el.textContent = at ? `${Math.max(0, Math.ceil((at - Date.now()) / 1000))} dtk` : '…';
     });
   }
 
-  delegate(app, handlers);
-  app.addEventListener('change', (e) => {
+  delegate(hostRoot, handlers);
+  // Wake Lock butuh interaksi pengguna; coba lagi setiap kali host mengetuk layar
+  app.addEventListener('click', () => { void keepAwake(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { void keepAwake(); return; }
+    // HP host dikunci / pindah aplikasi: jeda permainan (kecuali mode lokal, yang memang pindah-pindah tab)
+    if (!backend.localOnly && room?.game && room.auto && !room.auto.paused) {
+      setPaused(room.game, room.auto, true, Date.now());
+      commit();
+    }
+  });
+  hostRoot.addEventListener('change', (e) => {
     const el = e.target as HTMLSelectElement;
     if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });

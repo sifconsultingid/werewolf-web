@@ -13,6 +13,9 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
   let pub: PublicView | null = null;
   let priv: PrivateView | null = null;
   let waitedLong = false;
+  /** Kapan tampilan publik terakhir diterima (host mengirim detak tiap ~10 detik) */
+  let lastPubAt = 0;
+  let hostLost = false;
   let sending = false;
   const ui = {
     flipped: false,
@@ -299,7 +302,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         const ready = p.seats.find((s) => s.pid === me.pid)?.ready;
         return `<div class="center"><h2>Kartu Peranmu</h2>${roleCard(me.role!, ui.flipped)}
           ${ui.flipped ? secretNotes() : ''}
-          <button class="btn primary block" data-act="ready" ${ready || sending ? 'disabled' : ''}>${ready ? '✅ Siap — menunggu narator' : 'Saya Siap'}</button></div>`;
+          <button class="btn primary block" data-act="ready" ${ready || sending ? 'disabled' : ''}>${ready ? `✅ Siap — menunggu ${p.auto ? 'pemain lain' : 'narator'}` : 'Saya Siap'}</button></div>`;
       }
       case 'night': {
         const myResult = secretNotesTonight();
@@ -326,10 +329,22 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         return `<div class="card center gameover"><div class="winner-icon">${{ village: '☀️', wolves: '🌕', lovers: '💘', tanner: '🪦', draw: '💤' }[w.kind]}</div>
           <h1>${esc(winnerTitle(w))}</h1><p>${esc(winnerSubtitle(w))}</p>
           <div class="chips">${p.seats.map((s) => chip({ pid: s.pid, name: s.name, alive: s.alive, role: s.role, badge: p.lovers.includes(s.pid) ? '♥' : s.pid === me.pid ? 'kamu' : undefined })).join('')}</div>
-          <p class="muted small">Tunggu narator memulai permainan baru.</p></div>`;
+          <p class="muted small">Tunggu ${p.hostPid ? (p.hostPid === me.pid ? 'kamu (host) menekan 🔁 Main lagi' : 'host') : 'narator'} memulai permainan baru.</p></div>`;
       }
       default: return '';
     }
+  }
+
+  /** Status narator otomatis: jeda, batas waktu, voting ulang, host terputus. */
+  function autoStrip(): string {
+    const p = pub!;
+    let out = '';
+    if (hostLost && p.phase !== 'gameOver') out += '<div class="dead-banner">📡 Koneksi ke host terputus… menunggu host kembali</div>';
+    if (!p.auto) return out;
+    if (p.auto.paused) out += '<div class="dead-banner">⏸ Permainan dijeda host</div>';
+    else if (p.auto.endsAt) out += `<p class="center small">⏱️ Sisa waktu <b data-deadline="${p.auto.endsAt}">…</b></p>`;
+    if (p.auto.revote && !p.executionDone) out += '<p class="warn center">Seri! Voting diulang sekali lagi.</p>';
+    return out;
   }
 
   function secretNotesTonight(): string {
@@ -393,23 +408,28 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         <div class="card"><h3>Sudah masuk (${pub.seats.length})</h3>${pub.seats.length ? `<div class="chips">${pub.seats.map((s) => chip({ pid: s.pid, name: s.name })).join('')}</div>` : '<p class="muted">Belum ada.</p>'}</div>`;
     } else if (pub.phase === 'lobby') {
       html = `${header}<div class="card center"><div class="zzz">🏕️</div><h2>Halo, ${esc(priv.name)}!</h2>
-        <p>Kamu sudah masuk. Tunggu narator menekan <b>Mulai</b>.</p>
+        <p>Kamu sudah masuk. Tunggu ${pub.hostPid ? 'host' : 'narator'} menekan <b>Mulai</b>.</p>
         <button class="btn small ghost" data-act="editName">✏️ Ganti nama</button></div>
         <div class="card"><h3>Pemain di ruang (${pub.seats.length})</h3><div class="chips">${pub.seats.map((s) => chip({ pid: s.pid, name: s.name, badge: s.pid === priv!.pid ? 'kamu' : undefined })).join('')}</div></div>`;
     } else if (!priv.role) {
       html = `${header}<div class="card center"><p>Permainan sedang berlangsung tanpa kamu. Tunggu permainan berikutnya.</p></div>`;
     } else {
       html = `${header}${priv.alive === false && pub.phase !== 'gameOver' ? '<div class="dead-banner">💀 Kamu sudah mati — tetap diam & tonton permainan</div>' : ''}
-        ${priv.notice ? `<p class="warn small center">${esc(priv.notice)}</p>` : ''}${gameView()}`;
+        ${priv.notice ? `<p class="warn small center">${esc(priv.notice)}</p>` : ''}${autoStrip()}${gameView()}`;
     }
     const footer = backend.localOnly ? `<p class="muted tiny center">Mode lokal • <a href="#" data-act="newIdentity">jadi pemain baru di tab ini</a></p>` : '';
-    const screen = `${pub?.phase}-${pub?.nightNumber}-${pub?.dayNumber}-${priv?.joined}-${priv?.action?.key ?? ''}-${pub?.executionDone}`;
+    const screen = `${pub?.phase}-${pub?.nightNumber}-${pub?.dayNumber}-${priv?.joined}-${priv?.action?.key ?? ''}-${pub?.executionDone}-${pub?.auto?.revote ?? ''}`;
     patch(app, `${stars()}<main class="wrap player">${html}${footer}</main>${cardOverlay()}`, screen);
     tick();
   }
 
   function tick() {
     if (!pub) return;
+    const lost = lastPubAt > 0 && pub.phase !== 'lobby' && Date.now() - lastPubAt > 25000;
+    if (lost !== hostLost) { hostLost = lost; render(); return; }
+    app.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
+      el.textContent = `${Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000))} dtk`;
+    });
     app.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       const rem = discussionRemaining(pub!.discussionEndsAt, pub!.discussionPausedRemaining);
       el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
@@ -429,6 +449,8 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     uid = await backend.uid();
     backend.watchPublic(code, (d) => {
       pub = d as PublicView | null;
+      lastPubAt = Date.now();
+      hostLost = false;
       const k = pub ? `${pub.phase}-${pub.nightNumber}-${pub.dayNumber}-${pub.night?.index ?? ''}` : '';
       if (k !== lastPhaseKey) {
         lastPhaseKey = k;

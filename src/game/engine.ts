@@ -630,6 +630,13 @@ function startDiscussionTimer(g: GameState, now: number): void {
   g.discussionPausedRemaining = null;
 }
 
+/** Sisa waktu diskusi dalam detik (0 jika tidak ada timer berjalan). */
+export function discussionLeft(g: GameState, now = Date.now()): number {
+  if (g.discussionPausedRemaining !== null) return g.discussionPausedRemaining;
+  if (g.discussionEndsAt === null) return 0;
+  return Math.max(0, (g.discussionEndsAt - now) / 1000);
+}
+
 export function startDay(g: GameState, firstDay: boolean, now = Date.now()): void {
   g.dayNumber += 1;
   if (firstDay) g.lastDeaths = [];
