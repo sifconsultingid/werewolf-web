@@ -4,6 +4,7 @@ import { spellSentence, THIEF_NOTICE, TROUBLEMAKER_NOTICE, winnerSubtitle, winne
 import type { PlayerAction, PrivateView, PublicSeat, PublicView } from './game/room';
 import { ROLE_INFO, TEAM_NAME, WAKE_SCRIPT, type Role } from './game/roles';
 import type { Backend } from './net/backend';
+import { createBeeper } from './ui/beep';
 import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, vibrate,
 } from './ui/common';
@@ -476,18 +477,27 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     tick();
   }
 
+  const beeper = createBeeper();
+
   function tick() {
     if (!pub) return;
+    let soonest: number | null = null;
+    const note = (sec: number) => { soonest = soonest === null ? sec : Math.min(soonest, sec); };
     const lost = lastPubAt > 0 && pub.phase !== 'lobby' && Date.now() - lastPubAt > 25000;
     if (lost !== hostLost) { hostLost = lost; render(); return; }
     app.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
-      el.textContent = `${Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000))} dtk`;
+      const sec = Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000));
+      el.textContent = `${sec} dtk`;
+      el.classList.toggle('low', sec <= 10);
+      if (!pub!.auto?.paused) note(sec);
     });
     app.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       const rem = discussionRemaining(pub!.discussionEndsAt, pub!.discussionPausedRemaining);
       el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
       el.classList.toggle('low', rem <= 10);
+      if (pub!.discussionPausedRemaining === null) note(rem);
     });
+    beeper.update(soonest);
   }
 
   delegate(app, handlers);
