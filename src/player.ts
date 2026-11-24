@@ -84,6 +84,11 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     card: () => { ui.showCard = !ui.showCard; ui.flipped = true; render(); },
     sel1: (pid) => toggleSel(pid, 1),
     sel2: (pid) => toggleSel(pid, 2),
+    wolfConfirm: () => {
+      if (!ui.sel[0]) return;
+      vibrate(30);
+      void send({ type: 'wolfVote', target: ui.sel[0] });
+    },
     wolf: (pid) => {
       const mine = priv?.wolfVotes?.[priv.pid!];
       vibrate(20);
@@ -210,10 +215,12 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         const badges: Record<string, string> = {};
         for (const t of Object.values(votes)) badges[t] = (badges[t] ? badges[t] + ' ' : '') + '🐺';
         const mine = votes[priv!.pid!];
-        ui.sel = mine ? [mine] : [];
+        if (!ui.sel.length && mine) ui.sel = [mine];
+        const pick = ui.sel[0];
         const pack = priv!.pack?.filter((w) => w.alive) ?? [];
-        body = `<p class="center small">Ketuk satu korban. Semua serigala harus memilih orang yang sama.</p>
-          ${grid(a.candidates, 'wolf', { tint: '#ff4d4d', badges })}
+        body = `<p class="center small">Pilih satu korban lalu konfirmasi. Semua serigala harus memilih orang yang sama.</p>
+          ${grid(a.candidates, 'sel1', { tint: '#ff4d4d', badges })}
+          <button class="btn primary block" data-act="wolfConfirm" ${pick && pick !== mine && !sending ? '' : 'disabled'}>${!pick ? '🐺 Pilih korban' : pick === mine ? `✅ Kamu memilih ${esc(nameOf(pick))}` : `🐺 Konfirmasi: mangsa ${esc(nameOf(pick))}`}</button>
           <ul class="plain small">${pack.map((w) => `<li>🐺 ${esc(w.name)}${w.pid === priv!.pid ? ' (kamu)' : ''} → ${votes[w.pid] ? `<b>${esc(nameOf(votes[w.pid]))}</b>` : '<span class="muted">belum memilih</span>'}</li>`).join('')}</ul>`;
         break;
       }

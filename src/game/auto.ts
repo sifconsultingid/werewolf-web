@@ -28,18 +28,22 @@ export const DEFAULT_TIMINGS: AutoTimings = {
 };
 
 /**
- * Durasi minimum langkah malam (acak). Langkah peran yang pemegangnya sudah mati juga memakai
- * rentang yang mirip, supaya dari lamanya langkah tidak ketahuan apakah peran itu masih hidup.
+ * Langkah malam: begitu pemain menekan konfirmasi, langkah ditutup hampir seketika (jeda kecil
+ * supaya transisinya tidak terasa patah). Batas waktu `nightStepSeconds` hanya batas maksimal.
+ * Langkah peran yang pemegangnya sudah mati ditutup setelah jeda acak, supaya mirip pemain
+ * sungguhan yang sedang memilih.
  */
-export const NIGHT_MIN_MS: [number, number] = [9000, 15000];
-export const NIGHT_DEAD_MS: [number, number] = [10000, 20000];
+export const NIGHT_MIN_MS: [number, number] = [500, 1000];
+export const NIGHT_DEAD_MS: [number, number] = [5000, 9000];
 /** Jeda setelah narasi pagi / hasil voting sebelum lanjut */
-export const MORNING_GRACE_MS = 4000;
-export const RESULT_GRACE_MS = 5000;
+export const MORNING_GRACE_MS = 1500;
+export const RESULT_GRACE_MS = 2000;
 /** Jeda setelah semua pemain memilih (masih boleh mengganti pilihan) */
-export const ALL_VOTED_GRACE_MS = 3000;
+export const ALL_VOTED_GRACE_MS = 1500;
 /** Jeda setelah semua pemain menekan Siap */
-export const ALL_READY_GRACE_MS = 2000;
+export const ALL_READY_GRACE_MS = 1000;
+/** Sisa waktu minimum saat host mengurangi waktu diskusi/voting */
+export const MIN_LEFT_MS = 10000;
 
 export interface AutoState {
   /** Identitas tahap saat ini (berganti → timer baru) */
@@ -58,6 +62,8 @@ export interface AutoState {
   pausedAt: number | null;
   /** Diskusi ikut dijeda oleh tombol Jeda host */
   pausedDiscussion: boolean;
+  /** Host sudah mengatur waktu tahap ini: jangan dipersingkat otomatis lagi */
+  hostTimed?: boolean;
 }
 
 export function newAutoState(): AutoState {
@@ -123,6 +129,7 @@ export function autoTick(g: GameState, a: AutoState, now: number, opts: TickOpti
     a.startedAt = null;
     a.endsAt = null;
     a.minAt = null;
+    a.hostTimed = false;
     if (a.pending && a.pending.stage !== st.key) a.pending = null;
     changed = true;
   }
@@ -157,7 +164,7 @@ export function autoTick(g: GameState, a: AutoState, now: number, opts: TickOpti
   const due = a.endsAt !== null && now >= a.endsAt;
   switch (st.kind) {
     case 'reveal':
-      if (!due && g.ready.length >= g.players.length) {
+      if (!due && !a.hostTimed && g.ready.length >= g.players.length) {
         const soon = now + ALL_READY_GRACE_MS;
         if (a.endsAt === null || a.endsAt > soon) { a.endsAt = soon; changed = true; }
         break;
@@ -201,7 +208,7 @@ export function autoTick(g: GameState, a: AutoState, now: number, opts: TickOpti
 
     case 'vote': {
       const eligible = eligibleVoters(g).length;
-      if (!due && eligible > 0 && votesCast(g) >= eligible) {
+      if (!due && !a.hostTimed && eligible > 0 && votesCast(g) >= eligible) {
         const soon = now + ALL_VOTED_GRACE_MS;
         if (a.endsAt === null || a.endsAt > soon) { a.endsAt = soon; changed = true; }
         break;
@@ -250,6 +257,49 @@ export function setPaused(g: GameState, a: AutoState, paused: boolean, now: numb
   a.pausedDiscussion = false;
   a.paused = false;
   a.pausedAt = null;
+}
+
+/** Tahap yang waktunya boleh diatur host: diskusi, voting, dan lihat kartu. */
+export function hostCanControl(g: GameState, a: AutoState): 'reveal' | 'day' | 'vote' | null {
+  const kind = stageOf(g, a).kind;
+  return kind === 'reveal' || kind === 'day' || kind === 'vote' ? kind : null;
+}
+
+/** Host: selesaikan tahap ini sekarang (diskusi → voting, voting → hitung suara, kartu → malam). */
+export function finishStageNow(g: GameState, a: AutoState, now: number): void {
+  const kind = hostCanControl(g, a);
+  if (!kind) return;
+  if (kind === 'day') {
+    g.discussionEndsAt = now;
+    g.discussionPausedRemaining = null;
+    a.pausedDiscussion = false;
+    return;
+  }
+  a.startedAt ??= now;
+  a.endsAt = now;
+}
+
+/** Host: tambah (+) atau kurangi (−) waktu diskusi / voting / lihat kartu. */
+export function adjustStageTime(g: GameState, a: AutoState, deltaSeconds: number, now: number): void {
+  const kind = hostCanControl(g, a);
+  if (!kind) return;
+  const d = deltaSeconds * 1000;
+  a.hostTimed = true;
+  if (kind === 'day') {
+    if (g.discussionPausedRemaining !== null) {
+      g.discussionPausedRemaining = Math.max(MIN_LEFT_MS / 1000, g.discussionPausedRemaining + deltaSeconds);
+    } else if (g.discussionEndsAt !== null) {
+      g.discussionEndsAt = Math.max(now + MIN_LEFT_MS, g.discussionEndsAt + d);
+    }
+    return;
+  }
+  if (a.paused) {
+    // Saat dijeda, sisa waktu dihitung dari saat jeda dimulai
+    const at = a.pausedAt ?? now;
+    if (a.endsAt !== null) a.endsAt = Math.max(at + MIN_LEFT_MS, a.endsAt + d);
+    return;
+  }
+  if (a.endsAt !== null) a.endsAt = Math.max(now + MIN_LEFT_MS, a.endsAt + d);
 }
 
 /** Batas waktu yang boleh ditampilkan ke semua pemain (bukan malam: bisa membocorkan peran mati). */

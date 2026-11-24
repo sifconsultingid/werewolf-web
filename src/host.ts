@@ -13,7 +13,9 @@ import {
   removeSeat, startGame, syncAutoCounts, type PlayerAction, type Room,
 } from './game/room';
 import { ROLES, ROLE_INFO, sleepScript, WAKE_SCRIPT, type Role, type RoleCounts } from './game/roles';
-import { autoTick, DEFAULT_TIMINGS, setPaused, type AutoTimings } from './game/auto';
+import {
+  adjustStageTime, autoTick, DEFAULT_TIMINGS, finishStageNow, hostCanControl, setPaused, type AutoTimings,
+} from './game/auto';
 import { HUNTER_SCRIPT, narrationFor, NIGHT_FALLS, MORNING_COMES, TIME_UP_SCRIPT, VOTE_SCRIPT } from './game/narration';
 import type { Backend, Unsub } from './net/backend';
 import { startPlayer } from './player';
@@ -284,6 +286,12 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       void keepAwake();
       commit();
     },
+    stageNow: () => guard(() => {
+      if (room?.game && room.auto) finishStageNow(room.game, room.auto, Date.now());
+    }),
+    stageTime: (arg) => guard(() => {
+      if (room?.game && room.auto) adjustStageTime(room.game, room.auto, Number(arg), Date.now());
+    }),
     pause: () => guard(() => {
       if (!room?.game || !room.auto) return;
       setPaused(room.game, room.auto, !room.auto.paused, Date.now());
@@ -737,7 +745,25 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${over ? '<button class="btn small primary" data-act="playAgain">🔁 Main lagi</button>'
         : `<button class="btn small ${paused ? 'primary' : ''}" data-act="pause">${paused ? '▶️ Lanjut' : '⏸ Jeda'}</button>`}
       <button class="btn small ghost" data-act="endRoom">Tutup</button></div></header>
-      ${paused ? '<p class="warn small center">Permainan dijeda. Tekan ▶️ Lanjut untuk meneruskan.</p>' : '<p class="muted tiny center">Suara narator diputar dari HP ini. Jangan kunci layar.</p>'}`;
+      ${paused ? '<p class="warn small center">Permainan dijeda. Tekan ▶️ Lanjut untuk meneruskan.</p>' : '<p class="muted tiny center">Suara narator diputar dari HP ini. Jangan kunci layar.</p>'}
+      ${stageControls(r, g)}`;
+  }
+
+  /** Kontrol waktu host untuk tahap lihat kartu, diskusi, dan voting. */
+  function stageControls(r: Room, g: GameState): string {
+    const a = r.auto;
+    const kind = a ? hostCanControl(g, a) : null;
+    if (!a || !kind) return '';
+    const step = kind === 'vote' ? 15 : 30;
+    const deadline = kind === 'day' ? g.discussionEndsAt : a.endsAt;
+    const left = kind === 'day' && g.discussionPausedRemaining !== null
+      ? `<b>${fmtTime(g.discussionPausedRemaining)}</b>`
+      : deadline ? `<b data-deadline="${deadline}">…</b>` : '<b>…</b>';
+    const label = { reveal: 'Lihat kartu', day: 'Diskusi', vote: 'Voting' }[kind];
+    const finish = { reveal: '🌙 Mulai sekarang', day: '✋ Selesai, mulai voting', vote: '⚖️ Tutup voting' }[kind];
+    return `<div class="card host-stage"><div class="row between"><span>⏱️ ${label}: ${left}</span>
+        <div class="stepper"><button data-act="stageTime" data-arg="-${step}">−${step}</button><button data-act="stageTime" data-arg="${step}">+${step}</button></div></div>
+        <button class="btn primary block" data-act="stageNow">${finish}</button></div>`;
   }
 
   function render() {
@@ -791,6 +817,9 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
         el.classList.toggle('low', rem <= 10);
       }
     });
+    hostRoot.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
+      el.textContent = fmtTime(Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000)));
+    });
     hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
       el.textContent = at ? `${Math.max(0, Math.ceil((at - Date.now()) / 1000))} dtk` : '…';
@@ -815,7 +844,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });
   voice.onChange(() => render());
-  setInterval(tick, 500);
+  setInterval(tick, 250);
 
   if (room) {
     listen();

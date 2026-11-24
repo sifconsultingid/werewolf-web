@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ALL_VOTED_GRACE_MS, autoTick, DEFAULT_TIMINGS, NIGHT_DEAD_MS, NIGHT_MIN_MS, setPaused,
+  adjustStageTime, ALL_VOTED_GRACE_MS, autoTick, DEFAULT_TIMINGS, finishStageNow, NIGHT_DEAD_MS, NIGHT_MIN_MS, setPaused,
 } from '../src/game/auto';
 import { alivePlayers, autoAssignRoles, currentStep, eligibleVoters, stepCandidates } from '../src/game/engine';
 import {
@@ -60,7 +60,7 @@ describe('narator otomatis', () => {
     expect(t - now).toBeGreaterThanOrEqual(DEFAULT_TIMINGS.revealSeconds * SEC);
   });
 
-  it('aksi malam ditahan sampai durasi minimum, lalu langkah ditutup', () => {
+  it('aksi malam yang sudah dikonfirmasi langsung menutup langkah (batas waktu hanya maksimal)', () => {
     const room = autoRoom(['werewolf', 'seer', 'villager', 'villager', 'villager']);
     room.game!.ready = room.game!.players.map((p) => p.id);
     run(room, 0, () => room.game!.phase === 'night');
@@ -70,7 +70,7 @@ describe('narator otomatis', () => {
     applyPlayerAction(room, 'uid0', { type: 'wolfVote', target: pid(room, 2) });
     expect(currentStep(g)?.role).toBe('werewolf'); // belum ditutup
     const t1 = run(room, t0, () => currentStep(g)?.role === 'seer');
-    expect(t1 - t0).toBeGreaterThanOrEqual(NIGHT_MIN_MS[0]);
+    expect(t1 - t0).toBeLessThanOrEqual(NIGHT_MIN_MS[1] + 500);
     expect(g.wolfTarget).toBe(pid(room, 2));
 
     autoTick(g, room.auto!, t1 + 250);
@@ -227,5 +227,48 @@ describe('narator otomatis', () => {
       }
       expect(g.winner).not.toBeNull();
     }
+  });
+});
+
+describe('kontrol waktu host', () => {
+  function dayRoom() {
+    const room = autoRoom(['werewolf', 'villager', 'villager', 'villager', 'villager'], { startWithNight: false, discussionSeconds: 180 });
+    const g = room.game!;
+    g.ready = g.players.map((p) => p.id);
+    return { room, g };
+  }
+
+  it('host bisa menyelesaikan diskusi lebih cepat', () => {
+    const { room, g } = dayRoom();
+    const t0 = run(room, 0, () => g.phase === 'day');
+    finishStageNow(g, room.auto!, t0 + 5 * SEC);
+    const t1 = run(room, t0 + 5 * SEC, () => g.phase === 'vote');
+    expect(t1 - (t0 + 5 * SEC)).toBeLessThan(SEC);
+  });
+
+  it('host bisa menambah dan mengurangi waktu diskusi (minimal tersisa 10 dtk)', () => {
+    const { room, g } = dayRoom();
+    const t0 = run(room, 0, () => g.phase === 'day');
+    const end = g.discussionEndsAt!;
+    adjustStageTime(g, room.auto!, 30, t0);
+    expect(g.discussionEndsAt).toBe(end + 30 * SEC);
+    adjustStageTime(g, room.auto!, -600, t0);
+    expect(g.discussionEndsAt).toBe(t0 + 10 * SEC);
+  });
+
+  it('host bisa menutup voting sekarang atau memperpanjangnya', () => {
+    const { room, g } = dayRoom();
+    g.settings.skipDiscussion = true;
+    run(room, 0, () => g.phase === 'vote');
+    const t0 = 2 * SEC;
+    autoTick(g, room.auto!, t0);
+    const end = room.auto!.endsAt!;
+    adjustStageTime(g, room.auto!, 15, t0);
+    expect(room.auto!.endsAt).toBe(end + 15 * SEC);
+    expect(buildPublicView(room, t0).auto?.endsAt).toBe(end + 15 * SEC);
+    applyPlayerAction(room, 'uid1', { type: 'vote', target: pid(room, 0) });
+    finishStageNow(g, room.auto!, t0 + SEC);
+    run(room, t0 + SEC, () => g.executionDone);
+    expect(g.executedId).toBe(pid(room, 0));
   });
 });
