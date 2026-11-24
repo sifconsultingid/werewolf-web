@@ -864,6 +864,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   });
   voice.onChange(() => render());
   const beeper = createBeeper();
+  beeper.attachVoice(voice);
   setInterval(tick, 250);
 
   if (room) {
