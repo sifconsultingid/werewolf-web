@@ -302,6 +302,8 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     return `<p class="spell ${me ? 'me' : ''}">🤫 ${esc(spellSentence(s.mode, me ? 'Kamu' : nameOf(s.pid)))}</p>`;
   }
 
+  /** Pagi pertama: korban/Pencuri lihat lagi perubahan perannya di layar sendiri (tanpa getar, biar gak ketahuan) */
+  const myStolenNotice = () => pub!.cardStolen && priv?.thief ? `<div class="result">${thiefNote(priv.thief)}</div>` : '';
   const stolenNotice = () => pub!.cardStolen ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : '';
 
   function hunterPublic(): string {
@@ -337,7 +339,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         return `<div class="card"><h2>🌅 Pagi Hari ke-${p.dayNumber}</h2>
           ${p.lastDeaths.length ? deaths(p.lastDeaths) : '<p class="peace">☀️ Malam yang damai. Tidak ada yang mati.</p>'}
           ${p.lastRevived ? `<p class="good">🖐️ ${esc(nameOf(p.lastRevived))} bangkit kembali dari kematian!</p>` : ''}
-          ${stolenNotice()}${spellNotice()}${hunterPublic()}</div>${seatsChips()}`;
+          ${stolenNotice()}${myStolenNotice()}${spellNotice()}${hunterPublic()}</div>${seatsChips()}`;
       case 'day': {
         const rem = discussionRemaining(p.discussionEndsAt, p.discussionPausedRemaining);
         return `<div class="card center"><h2>☀️ Hari ${p.dayNumber} • Diskusi</h2>${stolenNotice()}${spellNotice()}
