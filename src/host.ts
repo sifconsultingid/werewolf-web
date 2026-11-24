@@ -23,6 +23,7 @@ import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, teamTag,
 } from './ui/common';
 import { createVoice, RECORDED } from './ui/voice';
+import { createBeeper } from './ui/beep';
 
 const STORE = (code: string) => `ww:host:${code}`;
 export const LAST_HOST_KEY = 'ww:host:last';
@@ -606,7 +607,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const prev = g.nightSteps[g.stepIndex - 1];
     let body = '';
     if (!step.active) {
-      body = `<p class="muted">💤 Pemegang peran ini sudah mati. Tetap bacakan narasinya agar pemain tidak curiga.</p>
+      const why = holders.some((p) => p.isAlive) ? 'Kesempatan peran ini sudah habis.' : 'Pemegang peran ini sudah mati.';
+      body = `<p class="muted">💤 ${why} Tetap bacakan narasinya agar pemain tidak curiga.</p>
         <p>Lanjut otomatis dalam <b data-countdown="${autoTimer?.at ?? 0}">…</b></p>
         <button class="btn" data-act="nextNow">Lanjut sekarang</button>`;
     } else if (step.role === 'werewolf') {
@@ -821,16 +823,22 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       lastSent.delete('*');
       publish().catch(() => { /* dicoba lagi di detak berikutnya */ });
     }
+    let soonest: number | null = null;
+    const note = (sec: number) => { soonest = soonest === null ? sec : Math.min(soonest, sec); };
     hostRoot.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       if (g) {
         const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
         el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
         el.classList.toggle('low', rem <= 10);
+        if (g.discussionPausedRemaining === null) note(rem);
       }
     });
     hostRoot.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
-      el.textContent = fmtTime(Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000)));
+      const sec = Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000));
+      el.textContent = fmtTime(sec);
+      if (!room?.auto?.paused) note(sec);
     });
+    beeper.update(soonest);
     hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
       el.textContent = at ? `${Math.max(0, Math.ceil((at - Date.now()) / 1000))} dtk` : '…';
@@ -855,6 +863,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });
   voice.onChange(() => render());
+  const beeper = createBeeper();
+  beeper.attachVoice(voice);
   setInterval(tick, 250);
 
   if (room) {

@@ -4,6 +4,7 @@ import { spellSentence, THIEF_NOTICE, TROUBLEMAKER_NOTICE, winnerSubtitle, winne
 import type { PlayerAction, PrivateView, PublicSeat, PublicView } from './game/room';
 import { ROLE_INFO, TEAM_NAME, WAKE_SCRIPT, type Role } from './game/roles';
 import type { Backend } from './net/backend';
+import { createBeeper } from './ui/beep';
 import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, vibrate,
 } from './ui/common';
@@ -285,16 +286,18 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         }
         break;
       case 'thief':
-        body = `<p class="center small">Mulai pagi, kamu jadi peran orang itu dan dia jadi Villager. Peran curianmu baru kelihatan setelah kamu mencuri.</p>
+        body = `<p class="center small">Kesempatanmu cuma sekali. Mulai pagi, kamu jadi peran orang itu dan dia jadi Villager. Boleh juga disimpan untuk malam lain.</p>
           ${grid(a.candidates, 'sel1', { tint: '#9aa0b4' })}
-          ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Tidak mencuri', true)}`;
+          ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Simpan untuk malam lain', true)}`;
         break;
       case 'troublemaker': {
         const two = ui.sel.length === 2;
+        const left = priv?.troublemaker && 'left' in priv.troublemaker ? priv.troublemaker.left : 2;
         body = `<p class="center small">Pilih 2 orang yang kartunya ditukar (${ui.sel.length}/2). Kamu tidak melihat kartu mereka; mulai pagi mereka saling bertukar peran.</p>
+          <p class="center small muted">Sisa kesempatan: <b>${left}</b>×. Boleh disimpan untuk malam lain.</p>
           ${grid(a.candidates, 'sel2', { tint: '#e0995a' })}
           ${two ? `<p class="center big">${esc(nameOf(ui.sel[0]))} 🔄 ${esc(nameOf(ui.sel[1]))}</p>` : ''}
-          ${submitBtn(two ? '🃏 Tukar kartu mereka' : ui.sel.length ? 'Pilih satu orang lagi' : '😴 Tidak menukar', ui.sel.length !== 1)}`;
+          ${submitBtn(two ? '🃏 Tukar kartu mereka' : ui.sel.length ? 'Pilih satu orang lagi' : '😴 Simpan untuk malam lain', ui.sel.length !== 1)}`;
         break;
       }
       case 'diseased':
@@ -402,10 +405,10 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (h?.walked) {
       return `<div class="result">${h.nearestWolves.length ? `🐺 Werewolf terdekat: <b>${h.nearestWolves.map((w) => esc(nameOf(w))).join(' / ')}</b>` : 'Tidak ada werewolf di dekatmu.'}</div>`;
     }
-    if (n === 1 && priv?.thief) {
+    if (priv?.thief && priv.thief.night === n) {
       return `<div class="result">${thiefNote(priv.thief)}</div>`;
     }
-    if (n === 1 && priv?.troublemaker) {
+    if (priv?.troublemaker && priv.troublemaker.night === n) {
       return `<div class="result">${troublemakerNote(priv.troublemaker)}</div>`;
     }
     if (n === 1 && priv?.lover) return `<div class="result">💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>!</div>`;
@@ -474,18 +477,27 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     tick();
   }
 
+  const beeper = createBeeper();
+
   function tick() {
     if (!pub) return;
+    let soonest: number | null = null;
+    const note = (sec: number) => { soonest = soonest === null ? sec : Math.min(soonest, sec); };
     const lost = lastPubAt > 0 && pub.phase !== 'lobby' && Date.now() - lastPubAt > 25000;
     if (lost !== hostLost) { hostLost = lost; render(); return; }
     app.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
-      el.textContent = `${Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000))} dtk`;
+      const sec = Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000));
+      el.textContent = `${sec} dtk`;
+      el.classList.toggle('low', sec <= 10);
+      if (!pub!.auto?.paused) note(sec);
     });
     app.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       const rem = discussionRemaining(pub!.discussionEndsAt, pub!.discussionPausedRemaining);
       el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
       el.classList.toggle('low', rem <= 10);
+      if (pub!.discussionPausedRemaining === null) note(rem);
     });
+    beeper.update(soonest);
   }
 
   delegate(app, handlers);

@@ -55,6 +55,12 @@ export interface Voice {
   replay(): void;
   /** Bacakan satu kalimat; pakai klip `clipId` jika rekaman aktif. */
   say(text: string, clipId?: string): void;
+  /**
+   * Efek suara singkat (mis. bip timer) lewat elemen audio narator yang sudah dibuka izinnya,
+   * jadi tidak perlu ketukan lagi. Tidak diputar jika suara dimatikan atau narator sedang bicara.
+   * Mengembalikan true jika diputar.
+   */
+  sfx(src: string): boolean;
   /** Contoh suara yang sedang dipilih. */
   test(): void;
   stop(): void;
@@ -251,6 +257,16 @@ export function createVoice(): Voice {
     prime(n) { lastKey = n?.key ?? ''; lastLines = n?.lines.slice() ?? []; },
     replay() { stop(); enqueue(itemsFor(lastLines)); },
     say(text, clipId) { enqueue(itemsFor([{ text, clips: clipId ? [clipId] : [] }])); },
+    sfx(src) {
+      if (!prefs.enabled || !audio || playing || blocked) return false;
+      if (ttsSupported && (synth!.speaking || synth!.pending)) return false;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.src = src;
+      audio.playbackRate = 1;
+      audio.play().catch(() => { /* belum diizinkan: lewati bip ini */ });
+      return true;
+    },
     test() { stop(); enqueue(itemsFor([{ text: GREETING_SCRIPT, clips: ['greeting'] }])); },
     stop,
     onChange(fn) { listeners.push(fn); },
