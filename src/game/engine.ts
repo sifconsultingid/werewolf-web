@@ -18,11 +18,11 @@ export type DeathCause = 'wolves' | 'poison' | 'vote' | 'hunter' | 'heartbreak' 
 
 export const DEATH_CAUSE_TEXT: Record<DeathCause, string> = {
   wolves: 'Dimangsa serigala',
-  poison: 'Diracun penyihir',
+  poison: 'Diracun Witch',
   vote: 'Dieksekusi warga',
-  hunter: 'Ditembak pemburu',
+  hunter: 'Ditembak Hunter',
   heartbreak: 'Mati patah hati',
-  disease: 'Tertular penyakit Si Sakit',
+  disease: 'Tertular penyakit Diseased',
 };
 
 export const DEATH_CAUSE_ICON: Record<DeathCause, string> = {
@@ -42,7 +42,7 @@ export function winnerTitle(w: Winner): string {
     case 'village': return 'Desa Menang!';
     case 'wolves': return 'Serigala Menang!';
     case 'lovers': return 'Cinta Menang!';
-    case 'tanner': return 'Si Penyamak Menang!';
+    case 'tanner': return 'Tanner Menang!';
     case 'draw': return 'Seri!';
   }
 }
@@ -91,7 +91,7 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 export interface SeerResult { night: number; targetId: string; isWolf: boolean }
-/** Pencuri menukar kartu di malam pertama */
+/** Thief menukar kartu di malam pertama */
 export interface ThiefSwap {
   thiefId: string; targetId: string; stolenRole: Role;
   /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight) */
@@ -120,7 +120,7 @@ export interface GameState {
   witchHealsTonight: boolean;
   witchPoisonTarget: string | null;
   seerTarget: string | null;
-  /** Serigala yang ditunjuk Si Sakit (ikut mati saat pagi) */
+  /** Serigala yang ditunjuk Diseased (ikut mati saat pagi) */
   diseasedRevenge: string | null;
   necromancerUsed: boolean;
   necromancerTarget: string | null;
@@ -129,14 +129,14 @@ export interface GameState {
   /** Mantra Perapal untuk siang ini */
   spellTarget: string | null;
   spellMode: SpellMode;
-  /** Hasil curian Pencuri (null = belum/tidak mencuri) */
+  /** Hasil curian Thief (null = belum/tidak mencuri) */
   thiefSwap?: ThiefSwap | null;
 
   // Siang
   lastDeaths: DeathEvent[];
   pendingHunters: string[];
   huntersUsed: string[];
-  /** Korban tembakan Pemburu pada fase pagi/eksekusi yang sedang berjalan */
+  /** Korban tembakan Hunter pada fase pagi/eksekusi yang sedang berjalan */
   hunterDeaths: DeathEvent[];
   /** Surat suara: pemilih → tersangka. Satu pemain hidup = satu suara. */
   ballots: Record<string, string>;
@@ -375,14 +375,14 @@ export function currentStep(g: GameState): NightStep | undefined {
   return g.phase === 'night' ? g.nightSteps[g.stepIndex] : undefined;
 }
 
-/** Apakah serangan serigala malam ini benar-benar mengenai Si Sakit */
+/** Apakah serangan serigala malam ini benar-benar mengenai Diseased */
 export function wolvesHitDiseased(g: GameState): boolean {
   const t = g.wolfTarget;
   if (!t || player(g, t)?.role !== 'diseased') return false;
   return g.protectedTonight !== t && !g.witchHealsTonight;
 }
 
-/** Tambah langkah Si Sakit di akhir malam jika ia dimangsa. */
+/** Tambah langkah Diseased di akhir malam jika ia dimangsa. */
 export function insertConditionalSteps(g: GameState): void {
   if (
     wolvesHitDiseased(g) &&
@@ -428,16 +428,16 @@ export function nearestWerewolves(g: GameState, fromId: string): string[] {
 export interface StepInput {
   /** Cupid: dua kekasih */
   lovers?: [string, string];
-  /** Pengawal, Werewolf, Peramal, Si Sakit, Pencuri: satu target (Pencuri tanpa target = tidak mencuri) */
+  /** Bodyguard, Werewolf, Seer, Diseased, Thief: satu target (Thief tanpa target = tidak mencuri) */
   target?: string;
-  /** Penyihir */
+  /** Witch */
   heal?: boolean;
   poison?: string | null;
-  /** Nekromancer (null = tidak membangkitkan) */
+  /** Necromancer (null = tidak membangkitkan) */
   revive?: string | null;
-  /** Perapal Mantra (target null = tanpa mantra) */
+  /** Spellcaster (target null = tanpa mantra) */
   spell?: { target: string | null; mode: SpellMode };
-  /** Insomnia */
+  /** Insomniac */
   walk?: boolean;
 }
 
@@ -453,7 +453,7 @@ function assertStep(g: GameState, role: Role): void {
 }
 
 /**
- * Peramal melihat hasil lebih dulu (sebelum langkahnya selesai) supaya hasilnya bisa ditunjukkan
+ * Seer melihat hasil lebih dulu (sebelum langkahnya selesai) supaya hasilnya bisa ditunjukkan
  * sebelum malam berganti pagi. Hanya sekali per malam.
  */
 export function seerPeek(g: GameState, target: string): SeerResult {
@@ -471,7 +471,7 @@ export function seerPeek(g: GameState, target: string): SeerResult {
   return r;
 }
 
-/** Insomnia memutuskan jalan-jalan atau tidak; hasilnya langsung terlihat. Sekali per malam. */
+/** Insomniac memutuskan jalan-jalan atau tidak; hasilnya langsung terlihat. Sekali per malam. */
 export function insomniacPeek(g: GameState, walk: boolean): InsomniacResult {
   assertStep(g, 'insomniac');
   const existing = g.insomniacHistory.find((h) => h.night === g.nightNumber);
@@ -490,7 +490,7 @@ export function insomniacPeek(g: GameState, walk: boolean): InsomniacResult {
  * Menyelesaikan langkah malam yang sedang berjalan. Untuk langkah yang tidak aktif (pemegang peran
  * sudah mati), panggil tanpa input. Mengembalikan true jika malam selesai (pagi tiba).
  * Berbeda dari iOS (yang mewajibkan pilihan), di web narator boleh melewati langkah pemain yang
- * tidak merespons; Pengawal/Werewolf/Peramal tanpa target dianggap tidak beraksi.
+ * tidak merespons; Bodyguard/Werewolf/Seer tanpa target dianggap tidak beraksi.
  */
 export function commitStep(g: GameState, input: StepInput = {}, now = Date.now(), skip = false): boolean {
   const step = currentStep(g);
@@ -560,7 +560,7 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
     }
   }
   g.wolfVotes = {};
-  // Si Sakit baru diketahui setelah semua pilihan malam dibuat
+  // Diseased baru diketahui setelah semua pilihan malam dibuat
   if (g.stepIndex === g.nightSteps.length - 1) insertConditionalSteps(g);
   if (g.stepIndex + 1 < g.nightSteps.length) {
     g.stepIndex += 1;
@@ -571,7 +571,7 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
 }
 
 /**
- * Pencuri memilih kartu yang dicuri. Pencuri bangun paling akhir di malam pertama, dan kartunya baru
+ * Thief memilih kartu yang dicuri. Thief bangun paling akhir di malam pertama, dan kartunya baru
  * ditukar saat pagi (applyThiefSwap), jadi malam itu semua peran beraksi dengan pemilik aslinya
  * dan tidak ada yang "terbangun sia-sia".
  */
@@ -610,13 +610,13 @@ export function resolveNight(g: GameState, now = Date.now()): void {
   }
   if (g.diseasedRevenge && wolvesHitDiseased(g)) killed.push([g.diseasedRevenge, 'disease']);
   g.lastProtected = g.protectedTonight;
-  // Nekromancer membangkitkan sebelum korban malam ini dihitung
+  // Necromancer membangkitkan sebelum korban malam ini dihitung
   const revived = player(g, g.necromancerTarget);
   if (revived && !revived.isAlive) {
     g.necromancerUsed = true;
     revived.isAlive = true;
     g.lastRevived = revived.id;
-    g.log.push({ text: `${revived.name} dibangkitkan Nekromancer`, icon: ROLE_INFO.necromancer.icon });
+    g.log.push({ text: `${revived.name} dibangkitkan Necromancer`, icon: ROLE_INFO.necromancer.icon });
   }
   const spelled = player(g, g.spellTarget);
   if (spelled) g.log.push({ text: `Mantra: ${spellSentence(g.spellMode, spelled.name)}`, icon: '🤫' });
@@ -649,7 +649,7 @@ export function applyDeaths(g: GameState, list: [string, DeathCause][]): DeathEv
   return events;
 }
 
-/** Pemburu menembak (target null = melewatkan). Mengembalikan event kematian akibat tembakan. */
+/** Hunter menembak (target null = melewatkan). Mengembalikan event kematian akibat tembakan. */
 export function hunterShoots(g: GameState, target: string | null): DeathEvent[] {
   const hunter = g.pendingHunters[0];
   if (!hunter) return [];
@@ -657,7 +657,7 @@ export function hunterShoots(g: GameState, target: string | null): DeathEvent[] 
   g.pendingHunters.shift();
   g.huntersUsed.push(hunter);
   if (target === null) {
-    g.log.push({ text: `${player(g, hunter)?.name ?? 'Pemburu'} tidak menembak`, icon: '🎯' });
+    g.log.push({ text: `${player(g, hunter)?.name ?? 'Hunter'} tidak menembak`, icon: '🎯' });
     return [];
   }
   const events = applyDeaths(g, [[target, 'hunter']]);
@@ -696,7 +696,7 @@ export function startDay(g: GameState, firstDay: boolean, now = Date.now()): voi
 
 /** Dari layar pagi → diskusi (atau langsung voting / hasil akhir). */
 export function goToDiscussion(g: GameState, now = Date.now()): void {
-  if (g.pendingHunters.length) throw new Error('Pemburu belum menembak.');
+  if (g.pendingHunters.length) throw new Error('Hunter belum menembak.');
   if (checkWinner(g)) return;
   if (g.settings.skipDiscussion) goToVote(g);
   else { g.phase = 'day'; startDiscussionTimer(g, now); }
@@ -714,7 +714,7 @@ export function goToVote(g: GameState): void {
   g.phase = 'vote';
 }
 
-/** Pemain yang boleh memberi suara hari ini (hidup & tidak dilarang Perapal Mantra) */
+/** Pemain yang boleh memberi suara hari ini (hidup & tidak dilarang Spellcaster) */
 export function eligibleVoters(g: GameState): Player[] {
   return alivePlayers(g).filter((p) => !(g.spellMode === 'noVote' && g.spellTarget === p.id));
 }
@@ -769,7 +769,7 @@ export function execute(g: GameState, id: string | null): void {
   if (p.role === 'prince' && !p.princeRevealed) {
     p.princeRevealed = true;
     g.princeSaved = p.id;
-    g.log.push({ text: `${p.name} ternyata Pangeran dan selamat!`, icon: '👑' });
+    g.log.push({ text: `${p.name} ternyata Prince dan selamat!`, icon: '👑' });
     return;
   }
   g.executionDeaths = applyDeaths(g, [[p.id, 'vote']]);
@@ -777,7 +777,7 @@ export function execute(g: GameState, id: string | null): void {
 }
 
 export function finishDay(g: GameState): void {
-  if (g.pendingHunters.length) throw new Error('Pemburu belum menembak.');
+  if (g.pendingHunters.length) throw new Error('Hunter belum menembak.');
   if (checkWinner(g)) return;
   startNight(g);
 }
@@ -814,7 +814,7 @@ export function computeWinner(g: GameState): Winner | null {
 /** Kalimat pengumuman pagi (untuk dibacakan narator). */
 export const THIEF_NOTICE = 'Semalam ada kartu yang dicuri! Seseorang di desa ini sudah bukan dirinya yang dulu.';
 
-/** Pagi setelah malam pertama: umumkan ke semua bahwa Pencuri beraksi (tanpa menyebut siapa). */
+/** Pagi setelah malam pertama: umumkan ke semua bahwa Thief beraksi (tanpa menyebut siapa). */
 export function cardStolenNotice(g: GameState): boolean {
   return !!g.thiefSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
 }

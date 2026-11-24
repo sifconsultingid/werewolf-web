@@ -324,7 +324,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       commitStep(g, { target: target ?? undefined });
     }),
     skipHunter: () => {
-      if (!confirm('Pemburu tidak menembak?')) return;
+      if (!confirm('Hunter tidak menembak?')) return;
       guard(() => hunterShoots(room!.game!, null));
     },
     toDiscussion: () => guard(() => goToDiscussion(room!.game!)),
@@ -489,7 +489,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${row('revealSeconds', 'Lihat kartu & siap')}
       ${row('nightStepSeconds', 'Tiap peran malam')}
       ${row('voteSeconds', 'Voting')}
-      ${row('hunterSeconds', 'Pemburu menembak')}
+      ${row('hunterSeconds', 'Hunter menembak')}
       <p class="muted tiny">Pemain yang tidak merespons sampai waktu habis dilewati. Serigala yang tidak sepakat = tidak ada korban. Voting seri diulang sekali, seri lagi = tidak ada eksekusi.</p>
     </div>`;
   }
@@ -533,7 +533,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
               <button class="icon" data-act="up" data-arg="${s.pid}" ${i === 0 ? 'disabled' : ''} title="Naik">▲</button>
               <button class="icon" data-act="down" data-arg="${s.pid}" ${i === n - 1 ? 'disabled' : ''} title="Turun">▼</button>
               ${s.uid === r.hostUid ? '<span class="icon"></span>' : `<button class="icon danger" data-act="kick" data-arg="${s.pid}" title="Keluarkan">✕</button>`}</li>`).join('')}</ol>
-            <p class="muted tiny">Urutan ini = urutan duduk melingkar (dipakai Insomnia untuk mencari Werewolf terdekat).</p>
+            <p class="muted tiny">Urutan ini = urutan duduk melingkar (dipakai Insomniac untuk mencari Werewolf terdekat).</p>
           </div>
         </div>
         <div>
@@ -552,7 +552,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (!showSecrets) return `<button class="btn small ghost block" data-act="toggleSecrets">🔒 Tampilkan catatan rahasia</button>`;
     const flags: string[] = [];
     if (g.players.some((p) => p.role === 'witch')) flags.push(`🧪 Penyembuh: ${g.witchHealUsed ? 'terpakai' : 'ada'} • Racun: ${g.witchPoisonUsed ? 'terpakai' : 'ada'}`);
-    if (g.players.some((p) => p.role === 'necromancer')) flags.push(`🖐️ Nekromancer: ${g.necromancerUsed ? 'terpakai' : 'belum'}`);
+    if (g.players.some((p) => p.role === 'necromancer')) flags.push(`🖐️ Necromancer: ${g.necromancerUsed ? 'terpakai' : 'belum'}`);
     if (g.lastProtected) flags.push(`🛡️ Dilindungi malam lalu: ${esc(player(g, g.lastProtected)?.name)}`);
     if (g.thiefSwap) {
       const t = g.thiefSwap;
@@ -585,12 +585,12 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const h = g.pendingHunters[0];
     let out = '';
     if (h) {
-      out += `<div class="card hunter"><h3>🎯 ${esc(player(g, h)?.name)} adalah PEMBURU!</h3>
+      out += `<div class="card hunter"><h3>🎯 ${esc(player(g, h)?.name)} adalah HUNTER!</h3>
         ${script(HUNTER_SCRIPT)}
-        <p class="muted">Menunggu Pemburu memilih target di HP-nya…</p>
+        <p class="muted">Menunggu Hunter memilih target di HP-nya…</p>
         <button class="btn small ghost" data-act="skipHunter">Lewati tembakan</button></div>`;
     }
-    if (g.hunterDeaths.length) out += `<div class="card"><h3>Korban tembakan Pemburu</h3>${deathList(g, g.hunterDeaths)}</div>`;
+    if (g.hunterDeaths.length) out += `<div class="card"><h3>Korban tembakan Hunter</h3>${deathList(g, g.hunterDeaths)}</div>`;
     return out;
   }
 
@@ -662,7 +662,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (g.executionDone) {
       const decided = g.winner !== null || computeWinner(g) !== null;
       let result = '';
-      if (g.princeSaved) result = `<p class="good big">👑 ${esc(player(g, g.princeSaved)?.name)} ternyata PANGERAN dan selamat!</p>`;
+      if (g.princeSaved) result = `<p class="good big">👑 ${esc(player(g, g.princeSaved)?.name)} ternyata PRINCE dan selamat!</p>`;
       else if (g.executionDeaths.length) result = deathList(g, g.executionDeaths);
       else result = '<p class="peace">✋ Tidak ada yang dieksekusi hari ini.</p>';
       return `<div class="card"><h2>⚖️ Hasil Voting Hari ${g.dayNumber}</h2>${result}</div>

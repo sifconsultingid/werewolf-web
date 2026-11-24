@@ -172,7 +172,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     const r = ROLE_INFO[t.stolenRole];
     return t.stole
       ? `🦹 Kamu mencuri kartu <b>${esc(nameOf(t.otherPid))}</b>: ${pub?.phase === 'night' ? 'mulai pagi ini' : 'sekarang'} kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`
-      : `🦹 Kartumu (${r.icon} ${esc(r.name)}) dicuri Pencuri! Sekarang kamu <b>Warga Desa</b>.`;
+      : `🦹 Kartumu (${r.icon} ${esc(r.name)}) dicuri Thief! Sekarang kamu <b>Villager</b>.`;
   }
 
   function cardOverlay(): string {
@@ -205,7 +205,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     const role = a.kind === 'hunter' ? 'hunter' : a.kind;
     const info = ROLE_INFO[role];
     const head = `<div class="step-role"><div class="role-icon big" style="background:${roleGradient(role)}">${info.icon}</div>
-      <h2>${a.kind === 'hunter' ? 'Kamu PEMBURU!' : `${esc(info.name)}, bangunlah`}</h2></div>
+      <h2>${a.kind === 'hunter' ? 'Kamu HUNTER!' : `${esc(info.name)}, bangunlah`}</h2></div>
       <p class="center">${esc(a.kind === 'hunter' ? 'Sebelum mati, tembak satu orang untuk ikut mati bersamamu.' : WAKE_SCRIPT[role] ?? '')}</p>`;
     let body = '';
     switch (a.kind) {
@@ -275,7 +275,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         }
         break;
       case 'thief':
-        body = `<p class="center small">Mulai pagi, kamu jadi peran orang itu dan dia jadi Warga Desa. Peran curianmu baru kelihatan setelah kamu mencuri.</p>
+        body = `<p class="center small">Mulai pagi, kamu jadi peran orang itu dan dia jadi Villager. Peran curianmu baru kelihatan setelah kamu mencuri.</p>
           ${grid(a.candidates, 'sel1', { tint: '#9aa0b4' })}
           ${submitBtn(ui.sel[0] ? `🦹 Curi kartu ${esc(nameOf(ui.sel[0]))}` : '😴 Tidak mencuri', true)}`;
         break;
@@ -302,14 +302,14 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     return `<p class="spell ${me ? 'me' : ''}">🤫 ${esc(spellSentence(s.mode, me ? 'Kamu' : nameOf(s.pid)))}</p>`;
   }
 
-  /** Pagi pertama: korban/Pencuri lihat lagi perubahan perannya di layar sendiri (tanpa getar, biar gak ketahuan) */
+  /** Pagi pertama: korban/Thief lihat lagi perubahan perannya di layar sendiri (tanpa getar, biar gak ketahuan) */
   const myStolenNotice = () => pub!.cardStolen && priv?.thief ? `<div class="result">${thiefNote(priv.thief)}</div>` : '';
   const stolenNotice = () => pub!.cardStolen ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : '';
 
   function hunterPublic(): string {
     let out = '';
-    if (pub!.pendingHunter && pub!.pendingHunter !== priv?.pid) out += `<p class="center">🎯 <b>${esc(nameOf(pub!.pendingHunter))}</b> adalah Pemburu dan sedang membidik…</p>`;
-    if (pub!.hunterDeaths.length) out += `<h3>Korban tembakan Pemburu</h3>${deaths(pub!.hunterDeaths)}`;
+    if (pub!.pendingHunter && pub!.pendingHunter !== priv?.pid) out += `<p class="center">🎯 <b>${esc(nameOf(pub!.pendingHunter))}</b> adalah Hunter dan sedang membidik…</p>`;
+    if (pub!.hunterDeaths.length) out += `<h3>Korban tembakan Hunter</h3>${deaths(pub!.hunterDeaths)}`;
     return out;
   }
 
@@ -393,7 +393,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     const me = priv!;
     if (p.executionDone) {
       let res = '';
-      if (p.princeSaved) res = `<p class="good big center">👑 ${esc(nameOf(p.princeSaved))} ternyata PANGERAN dan selamat!</p>`;
+      if (p.princeSaved) res = `<p class="good big center">👑 ${esc(nameOf(p.princeSaved))} ternyata PRINCE dan selamat!</p>`;
       else if (p.executionDeaths.length) res = deaths(p.executionDeaths);
       else res = '<p class="peace">✋ Tidak ada yang dieksekusi hari ini.</p>';
       return `<div class="card"><h2>⚖️ Hasil Voting</h2>${res}${hunterPublic()}</div>`;

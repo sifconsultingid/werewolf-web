@@ -75,7 +75,7 @@ describe('narator otomatis', () => {
 
     autoTick(g, room.auto!, t1 + 250);
     applyPlayerAction(room, 'uid1', { type: 'night', input: { target: pid(room, 0) } });
-    // Setelah mengirim, layar Peramal tidak lagi menampilkan tombol aksi
+    // Setelah mengirim, layar Seer tidak lagi menampilkan tombol aksi
     expect(buildPrivateView(room, 'uid1').action).toBeNull();
     expect(currentStep(g)?.role).toBe('seer');
     run(room, t1 + 250, () => g.phase === 'morning');
@@ -99,7 +99,7 @@ describe('narator otomatis', () => {
   it('langkah peran yang sudah mati ditutup sendiri dalam rentang acak, tanpa batas waktu publik', () => {
     const room = autoRoom(['werewolf', 'seer', 'villager', 'villager', 'villager', 'villager']);
     const g = room.game!;
-    g.players[1].isAlive = false; // Peramal mati
+    g.players[1].isAlive = false; // Seer mati
     g.ready = g.players.map((p) => p.id);
     run(room, 0, () => g.phase === 'night');
     applyPlayerAction(room, 'uid0', { type: 'wolfVote', target: pid(room, 2) });
@@ -156,7 +156,7 @@ describe('narator otomatis', () => {
     expect(g2.winner?.kind).toBe('village');
   });
 
-  it('Pemburu yang tidak menembak sampai waktu habis dilewati', () => {
+  it('Hunter yang tidak menembak sampai waktu habis dilewati', () => {
     const room = autoRoom(['werewolf', 'hunter', 'villager', 'villager', 'villager', 'villager'], { startWithNight: false, skipDiscussion: true });
     const g = room.game!;
     g.ready = g.players.map((p) => p.id);

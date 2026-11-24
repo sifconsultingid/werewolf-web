@@ -5,7 +5,7 @@ import { buildPrivateView, type Room } from '../src/game/room';
 import type { GameState } from '../src/game/engine';
 import { gameWith } from './helpers';
 
-/** Jalankan langkah malam sampai giliran Pencuri. */
+/** Jalankan langkah malam sampai giliran Thief. */
 function toThief(g: GameState) {
   while (currentStep(g)?.role !== 'thief') commitStep(g, {});
 }
@@ -15,7 +15,7 @@ const roomOf = (g: GameState) => ({
   game: g, notices: {}, auto: null,
 } as unknown as Room);
 
-describe('Pencuri', () => {
+describe('Thief', () => {
   it('bangun paling akhir di malam 1 dan tidak muncul lagi di malam berikutnya', () => {
     const g = gameWith(['thief', 'cupid', 'werewolf', 'seer', 'villager']);
     beginFirstRound(g);
@@ -30,16 +30,16 @@ describe('Pencuri', () => {
     beginFirstRound(g);
     commitStep(g, { target: 'p3' }); // serigala
     expect(currentStep(g)?.role).toBe('seer');
-    commitStep(g, { target: 'p2' }); // Peramal asli (p1) menerawang
+    commitStep(g, { target: 'p2' }); // Seer asli (p1) menerawang
     expect(g.seerHistory[0].targetId).toBe('p2');
-    commitStep(g, { target: 'p1' }); // Pencuri mencuri kartu Peramal
+    commitStep(g, { target: 'p1' }); // Thief mencuri kartu Seer
     expect(g.phase).toBe('morning');
     expect(g.players[0].role).toBe('seer');
     expect(g.players[1].role).toBe('villager');
     expect(g.thiefSwap).toMatchObject({ thiefId: 'p0', targetId: 'p1', stolenRole: 'seer', applied: true });
   });
 
-  it('pagi: Pencuri tahu curiannya; korban tahu kartunya dicuri tanpa tahu siapa Pencurinya', () => {
+  it('pagi: Thief tahu curiannya; korban tahu kartunya dicuri tanpa tahu siapa Thiefnya', () => {
     const g = gameWith(['thief', 'seer', 'werewolf', 'villager', 'villager']);
     beginFirstRound(g);
     toThief(g);
@@ -51,7 +51,7 @@ describe('Pencuri', () => {
     expect(victim.thief).toEqual({ stole: false, otherPid: undefined, stolenRole: 'seer' });
   });
 
-  it('mencuri Werewolf: serigala asli ikut memangsa malam 1, Pencuri jadi serigala mulai pagi', () => {
+  it('mencuri Werewolf: serigala asli ikut memangsa malam 1, Thief jadi serigala mulai pagi', () => {
     const g = gameWith(['thief', 'werewolf', 'werewolf', 'villager', 'villager', 'villager', 'seer']);
     beginFirstRound(g);
     commitStep(g, { target: 'p3' });
@@ -61,7 +61,7 @@ describe('Pencuri', () => {
     expect(g.players[3].isAlive).toBe(false);
   });
 
-  it('tidak mencuri = tetap Pencuri (warga biasa), tanpa pengumuman', () => {
+  it('tidak mencuri = tetap Thief (warga biasa), tanpa pengumuman', () => {
     const g = gameWith(['thief', 'seer', 'werewolf', 'villager', 'villager']);
     beginFirstRound(g);
     while (g.phase === 'night') commitStep(g, {});

@@ -83,7 +83,7 @@ describe('malam', () => {
     expect(() => commitStep(g, { target: 'p1' })).toThrow();
   });
 
-  it('penyihir menyembuhkan & meracun, masing-masing sekali', () => {
+  it('Witch menyembuhkan & meracun, masing-masing sekali', () => {
     const g = gameWith(['werewolf', 'witch', 'villager', 'villager', 'villager', 'villager']);
     beginFirstRound(g);
     commitStep(g, { target: 'p2' });
@@ -93,7 +93,7 @@ describe('malam', () => {
     expect(computeWinner(g)).toEqual({ kind: 'village' });
   });
 
-  it('penyihir tidak bisa menyembuhkan lagi setelah dipakai', () => {
+  it('Witch tidak bisa menyembuhkan lagi setelah dipakai', () => {
     const g = gameWith(['werewolf', 'witch', 'villager', 'villager', 'villager', 'villager', 'werewolf']);
     beginFirstRound(g);
     commitStep(g, { target: 'p2' });
@@ -104,12 +104,12 @@ describe('malam', () => {
     expect(g.lastDeaths).toEqual([{ playerId: 'p3', cause: 'wolves' }]);
   });
 
-  it('Si Sakit dibangunkan hanya jika dimangsa, lalu menulari satu serigala', () => {
+  it('Diseased dibangunkan hanya jika dimangsa, lalu menulari satu serigala', () => {
     const g = gameWith(['werewolf', 'werewolf', 'diseased', 'seer', 'villager', 'villager', 'villager']);
     beginFirstRound(g);
-    commitStep(g, { target: 'p2' }); // serigala memangsa Si Sakit
+    commitStep(g, { target: 'p2' }); // serigala memangsa Diseased
     expect(currentStep(g)?.role).toBe('seer');
-    commitStep(g, { target: 'p0' }); // peramal → langkah terakhir → Si Sakit disisipkan
+    commitStep(g, { target: 'p0' }); // peramal → langkah terakhir → Diseased disisipkan
     expect(currentStep(g)?.role).toBe('diseased');
     expect(() => commitStep(g, { target: 'p3' })).toThrow(); // harus serigala
     commitStep(g, { target: 'p1' });
@@ -117,7 +117,7 @@ describe('malam', () => {
     expect(g.seerHistory).toEqual([{ night: 1, targetId: 'p0', isWolf: true }]);
   });
 
-  it('Si Sakit tidak dibangunkan jika dilindungi', () => {
+  it('Diseased tidak dibangunkan jika dilindungi', () => {
     const g = gameWith(['werewolf', 'bodyguard', 'diseased', 'villager', 'villager']);
     beginFirstRound(g);
     commitStep(g, { target: 'p2' });
@@ -135,7 +135,7 @@ describe('malam', () => {
     expect(ROLE_INFO.lycan.team).toBe('village');
   });
 
-  it('Nekromancer membangkitkan sekali', () => {
+  it('Necromancer membangkitkan sekali', () => {
     const g = gameWith(['werewolf', 'necromancer', 'villager', 'villager', 'villager', 'villager', 'werewolf']);
     beginFirstRound(g);
     commitStep(g, { target: 'p2' });
@@ -152,7 +152,7 @@ describe('malam', () => {
     expect(() => commitStep(g, { revive: 'p3' })).toThrow();
   });
 
-  it('Perapal Mantra melarang voting', () => {
+  it('Spellcaster melarang voting', () => {
     const g = gameWith(['werewolf', 'spellcaster', 'villager', 'villager', 'villager']);
     beginFirstRound(g);
     commitStep(g, { target: 'p2' });
@@ -162,7 +162,7 @@ describe('malam', () => {
     expect(() => castVote(g, 'p3', 'p0')).toThrow();
   });
 
-  it('Insomnia melihat werewolf terdekat (urutan duduk melingkar)', () => {
+  it('Insomniac melihat werewolf terdekat (urutan duduk melingkar)', () => {
     const g = gameWith(['werewolf', 'villager', 'villager', 'insomniac', 'villager', 'villager', 'werewolf']);
     expect(nearestWerewolves(g, 'p3').sort()).toEqual(['p0', 'p6']);
     g.players[6].isAlive = false;
@@ -240,7 +240,7 @@ describe('siang & voting', () => {
     expect(votes(g)).toEqual({});
   });
 
-  it('Pangeran selamat dari eksekusi pertama saja', () => {
+  it('Prince selamat dari eksekusi pertama saja', () => {
     const g = gameWith(['werewolf', 'prince', 'villager', 'villager', 'villager', 'villager', 'werewolf'], { startWithNight: false, skipDiscussion: true });
     beginFirstRound(g);
     execute(g, 'p1');
@@ -253,7 +253,7 @@ describe('siang & voting', () => {
     expect(g.players[1].isAlive).toBe(false);
   });
 
-  it('Si Penyamak menang jika dieksekusi', () => {
+  it('Tanner menang jika dieksekusi', () => {
     const g = gameWith(['werewolf', 'tanner', 'villager', 'villager', 'villager'], { startWithNight: false, skipDiscussion: true });
     beginFirstRound(g);
     execute(g, 'p1');
@@ -262,7 +262,7 @@ describe('siang & voting', () => {
     expect(g.winner).toEqual({ kind: 'tanner', name: 'Pemain 2' });
   });
 
-  it('Pemburu menembak saat mati, dan harus menembak sebelum lanjut', () => {
+  it('Hunter menembak saat mati, dan harus menembak sebelum lanjut', () => {
     const g = gameWith(['werewolf', 'hunter', 'villager', 'villager', 'villager', 'villager', 'werewolf']);
     beginFirstRound(g);
     commitStep(g, { target: 'p1' });

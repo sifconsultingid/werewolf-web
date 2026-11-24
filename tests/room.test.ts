@@ -79,7 +79,7 @@ describe('kerahasiaan tampilan', () => {
     expect(currentStep(room.game!)?.role).toBe('werewolf');
     expect(buildPrivateView(room, 'uid0').action?.kind).toBe('werewolf');
     expect(buildPrivateView(room, 'uid2').action).toBeNull();
-    // Peramal mencoba beraksi di luar gilirannya → ditolak
+    // Seer mencoba beraksi di luar gilirannya → ditolak
     applyPlayerAction(room, 'uid2', { type: 'peek', target: pidOf(room, 0) });
     expect(room.game!.seerHistory).toEqual([]);
     expect(buildPrivateView(room, 'uid2').notice).toMatch(/Bukan giliranmu/);
@@ -97,7 +97,7 @@ describe('kerahasiaan tampilan', () => {
     expect(room.game!.wolfTarget).toBe(pidOf(room, 3));
   });
 
-  it('Peramal melihat hasil dulu, lalu tidur kembali; malam berakhir', () => {
+  it('Seer melihat hasil dulu, lalu tidur kembali; malam berakhir', () => {
     const room = started(['werewolf', 'seer', 'lycan', 'villager', 'villager']);
     beginFirstRound(room.game!);
     applyPlayerAction(room, 'uid0', { type: 'wolfVote', target: pidOf(room, 3) });
@@ -121,7 +121,7 @@ describe('kerahasiaan tampilan', () => {
     expect(buildPublicView(room).tally).toEqual({ [pidOf(room, 0)]: 1 });
   });
 
-  it('peran pemain mati disembunyikan jika pengaturannya mati, kecuali Si Penyamak yang dieksekusi', () => {
+  it('peran pemain mati disembunyikan jika pengaturannya mati, kecuali Tanner yang dieksekusi', () => {
     const room = started(['werewolf', 'tanner', 'villager', 'villager', 'villager']);
     room.game!.settings.revealRoleOnDeath = false;
     room.game!.players[2].isAlive = false;
