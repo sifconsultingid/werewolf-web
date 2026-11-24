@@ -606,7 +606,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const prev = g.nightSteps[g.stepIndex - 1];
     let body = '';
     if (!step.active) {
-      body = `<p class="muted">💤 Pemegang peran ini sudah mati. Tetap bacakan narasinya agar pemain tidak curiga.</p>
+      const why = holders.some((p) => p.isAlive) ? 'Kesempatan peran ini sudah habis.' : 'Pemegang peran ini sudah mati.';
+      body = `<p class="muted">💤 ${why} Tetap bacakan narasinya agar pemain tidak curiga.</p>
         <p>Lanjut otomatis dalam <b data-countdown="${autoTimer?.at ?? 0}">…</b></p>
         <button class="btn" data-act="nextNow">Lanjut sekarang</button>`;
     } else if (step.role === 'werewolf') {

@@ -4,7 +4,7 @@
 
 import {
   alivePlayers, autoAssignRoles, castVote, commitStep, createGame, currentStep, DEFAULT_SETTINGS,
-  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, cardsSwappedNotice, morningAnnouncement, seerPeek, player, stepCandidates, votes,
+  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, cardsSwappedNotice, morningAnnouncement, seerPeek, player, troublemakerLeft, stepCandidates, votes,
   type DeathCause, type GameState, type Phase, type Rng, type Settings, type SpellMode, type StepInput,
   type Winner, MAX_PLAYERS,
 } from './engine';
@@ -350,7 +350,7 @@ export interface PrivateView {
   /** Thief: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
   thief?: { stole: boolean; otherPid?: string; stolenRole: Role; night: number };
   /** Troublemaker: dua orang yang kamu tukar (tanpa kartunya) / korban: peran barumu (tanpa nama pelaku) */
-  troublemaker?: { swapped: string[] } | { newRole: Role };
+  troublemaker?: { swapped: string[]; night: number; left: number } | { newRole: Role; night: number };
   action?: ActionPrompt | null;
   updatedAt: number;
 }
@@ -508,8 +508,9 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (tm) {
     const idx = tm.pids.indexOf(me.id);
     // Korban baru tahu saat pagi; Troublemaker tahu siapa yang ditukar tapi tidak melihat kartunya
-    if (idx >= 0 && tm.applied && tm.newRoles) view.troublemaker = { newRole: tm.newRoles[idx] };
-    else if (tm.troublemakerId === me.id) view.troublemaker = { swapped: [...tm.pids] };
+    const night = tm.night ?? 1;
+    if (idx >= 0 && tm.applied && tm.newRoles) view.troublemaker = { newRole: tm.newRoles[idx], night };
+    else if (tm.troublemakerId === me.id) view.troublemaker = { swapped: [...tm.pids], night, left: troublemakerLeft(g) };
   }
   if (me.role === 'insomniac') {
     view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));

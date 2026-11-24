@@ -291,10 +291,12 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         break;
       case 'troublemaker': {
         const two = ui.sel.length === 2;
+        const left = priv?.troublemaker && 'left' in priv.troublemaker ? priv.troublemaker.left : 2;
         body = `<p class="center small">Pilih 2 orang yang kartunya ditukar (${ui.sel.length}/2). Kamu tidak melihat kartu mereka; mulai pagi mereka saling bertukar peran.</p>
+          <p class="center small muted">Sisa kesempatan: <b>${left}</b>×. Boleh disimpan untuk malam lain.</p>
           ${grid(a.candidates, 'sel2', { tint: '#e0995a' })}
           ${two ? `<p class="center big">${esc(nameOf(ui.sel[0]))} 🔄 ${esc(nameOf(ui.sel[1]))}</p>` : ''}
-          ${submitBtn(two ? '🃏 Tukar kartu mereka' : ui.sel.length ? 'Pilih satu orang lagi' : '😴 Tidak menukar', ui.sel.length !== 1)}`;
+          ${submitBtn(two ? '🃏 Tukar kartu mereka' : ui.sel.length ? 'Pilih satu orang lagi' : '😴 Simpan untuk malam lain', ui.sel.length !== 1)}`;
         break;
       }
       case 'diseased':
@@ -405,7 +407,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (priv?.thief && priv.thief.night === n) {
       return `<div class="result">${thiefNote(priv.thief)}</div>`;
     }
-    if (n === 1 && priv?.troublemaker) {
+    if (priv?.troublemaker && priv.troublemaker.night === n) {
       return `<div class="result">${troublemakerNote(priv.troublemaker)}</div>`;
     }
     if (n === 1 && priv?.lover) return `<div class="result">💘 Kamu jatuh cinta pada <b>${esc(nameOf(priv.lover))}</b>!</div>`;

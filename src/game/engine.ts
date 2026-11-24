@@ -99,9 +99,14 @@ export interface ThiefSwap {
   /** false = sudah dipilih tapi kartu baru ditukar saat pagi (resolveNight) */
   applied: boolean;
 }
-/** Troublemaker menukar kartu dua pemain lain di malam pertama */
+/** Batas tukar Troublemaker sepanjang permainan (maksimal sekali per malam) */
+export const TROUBLEMAKER_MAX_SWAPS = 2;
+
+/** Troublemaker menukar kartu dua pemain lain (malam mana pun, maks. TROUBLEMAKER_MAX_SWAPS kali) */
 export interface TroublemakerSwap {
   troublemakerId: string;
+  /** Malam saat tukar dipilih (tidak ada = malam 1, untuk state lama) */
+  night?: number;
   /** Dua pemain yang kartunya ditukar */
   pids: [string, string];
   /** Peran baru masing-masing setelah ditukar (diisi saat pagi) */
@@ -145,6 +150,8 @@ export interface GameState {
   thiefSwap?: ThiefSwap | null;
   /** Tukaran Troublemaker (null = belum/tidak menukar) */
   troublemakerSwap?: TroublemakerSwap | null;
+  /** Berapa kali Troublemaker sudah menukar */
+  troublemakerUses?: number;
 
   // Siang
   lastDeaths: DeathEvent[];
@@ -379,8 +386,10 @@ export function startNight(g: GameState): void {
     .sort((a, b) => (ROLE_INFO[a].nightOrder ?? 0) - (ROLE_INFO[b].nightOrder ?? 0));
   const steps: NightStep[] = [];
   for (const role of ordered) {
-    if ((role === 'cupid' || role === 'troublemaker') && g.nightNumber !== 1) continue;
-    steps.push({ role, active: isRoleAlive(g, role) });
+    if (role === 'cupid' && g.nightNumber !== 1) continue;
+    // Troublemaker yang kesempatannya habis tetap dipanggil (tidak aktif) supaya tidak ketahuan
+    const spent = role === 'troublemaker' && troublemakerLeft(g) <= 0;
+    steps.push({ role, active: isRoleAlive(g, role) && !spent });
   }
   g.nightSteps = steps;
   g.phase = 'night';
@@ -421,7 +430,7 @@ export function stepCandidates(g: GameState, role: Role): Player[] {
     case 'spellcaster': return alive;
     case 'diseased': return alive.filter((p) => p.role === 'werewolf');
     case 'thief': return alive.filter((p) => p.role !== 'thief');
-    case 'troublemaker': return alive.filter((p) => p.role !== 'troublemaker');
+    case 'troublemaker': return troublemakerLeft(g) > 0 ? alive.filter((p) => p.role !== 'troublemaker') : [];
     default: return [];
   }
 }
@@ -580,7 +589,10 @@ export function commitStep(g: GameState, input: StepInput = {}, now = Date.now()
           assertCandidate(g, 'troublemaker', a);
           assertCandidate(g, 'troublemaker', b);
           const tm = g.players.find((p) => p.role === 'troublemaker' && p.isAlive);
-          if (tm) g.troublemakerSwap = { troublemakerId: tm.id, pids: [a, b], applied: false };
+          if (tm && troublemakerLeft(g) > 0) {
+            g.troublemakerSwap = { troublemakerId: tm.id, pids: [a, b], applied: false, night: g.nightNumber };
+            g.troublemakerUses = (g.troublemakerUses ?? 0) + 1;
+          }
         }
         break;
       default:
@@ -622,6 +634,10 @@ function applyThiefSwap(g: GameState): void {
   thief.role = target.role;
   target.role = 'villager';
   g.log.push({ text: `${thief.name} mencuri kartu ${ROLE_INFO[s.stolenRole].name} dari ${target.name}`, icon: ROLE_INFO.thief.icon });
+}
+
+export function troublemakerLeft(g: GameState): number {
+  return TROUBLEMAKER_MAX_SWAPS - (g.troublemakerUses ?? 0);
 }
 
 /** Tukar kartu pilihan Troublemaker. Dijalankan setelah curian Thief, jadi yang ditukar adalah kartu hasil curian. */
@@ -865,9 +881,10 @@ export function cardStolenNotice(g: GameState): boolean {
 
 export const TROUBLEMAKER_NOTICE = 'Ada yang membuat onar semalam! Kartu dua orang di desa ini sudah ditukar.';
 
-/** Pagi setelah malam pertama: umumkan ke semua bahwa Troublemaker beraksi (tanpa menyebut siapa). */
+/** Pagi setelah malam tukar: umumkan ke semua bahwa Troublemaker beraksi (tanpa menyebut siapa). */
 export function cardsSwappedNotice(g: GameState): boolean {
-  return !!g.troublemakerSwap && g.nightNumber === 1 && (g.phase === 'morning' || g.phase === 'day');
+  const s = g.troublemakerSwap;
+  return !!s && s.applied && (s.night ?? 1) === g.nightNumber && (g.phase === 'morning' || g.phase === 'day');
 }
 
 export function morningAnnouncement(g: GameState): string {

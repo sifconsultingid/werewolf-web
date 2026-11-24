@@ -135,7 +135,7 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
   troublemaker: {
     name: 'Troublemaker', team: 'village', icon: '🃏', colors: [rgb(0.55, 0.2, 0.45), rgb(0.95, 0.6, 0.3)],
     balance: -1, allowsMultiple: false, nightOrder: 9, looksLikeWerewolf: false,
-    short: 'Malam pertama (setelah Thief) boleh menukar kartu dua pemain lain tanpa melihatnya. Mulai pagi, mereka saling jadi peran satu sama lain. Kamu tetap Tim Desa.',
+    short: 'Di malam mana pun (setelah Thief) boleh menukar kartu dua pemain lain tanpa melihatnya, maksimal 2 kali sepanjang permainan. Mulai pagi, mereka saling jadi peran satu sama lain. Kamu tetap Tim Desa.',
     tips: 'Kacaukan rencana serigala—tapi kamu sendiri tidak tahu kartu siapa yang pindah ke mana!',
   },
 };
@@ -144,7 +144,7 @@ export type RoleCounts = Partial<Record<Role, number>>;
 
 export const WAKE_SCRIPT: Partial<Record<Role, string>> = {
   thief: 'Thief, bangunlah. Tunjuk satu orang yang kartunya ingin kamu curi, atau simpan kesempatanmu untuk malam lain.',
-  troublemaker: 'Troublemaker, bangunlah. Tunjuk dua orang yang kartunya ingin kamu tukar, atau biarkan saja.',
+  troublemaker: 'Troublemaker, bangunlah. Tunjuk dua orang yang kartunya ingin kamu tukar, atau simpan kesempatanmu.',
   cupid: 'Cupid, bangunlah. Tunjuk dua orang yang akan saling jatuh cinta.',
   bodyguard: 'Bodyguard, bangunlah. Siapa yang ingin kamu lindungi malam ini?',
   werewolf: 'Para serigala, bangunlah. Sepakati satu korban yang akan kalian mangsa malam ini.',

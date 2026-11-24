@@ -16,13 +16,26 @@ const roomOf = (g: GameState) => ({
 } as unknown as Room);
 
 describe('Troublemaker', () => {
-  it('bangun setelah Thief di malam 1, tidak muncul lagi di malam berikutnya', () => {
-    const g = gameWith(['troublemaker', 'thief', 'werewolf', 'seer', 'villager']);
+  it('bangun setelah Thief tiap malam; maksimal 2 kali tukar, lalu langkahnya tidak aktif', () => {
+    const g = gameWith(['troublemaker', 'thief', 'werewolf', 'seer', 'villager', 'villager', 'villager']);
     beginFirstRound(g);
     expect(g.nightSteps.map((s) => s.role)).toEqual(['werewolf', 'seer', 'thief', 'troublemaker']);
+    while (g.phase === 'night') commitStep(g, {}, Date.now(), currentStep(g)?.role !== 'troublemaker'); // malam 1: simpan
+    expect(g.troublemakerUses ?? 0).toBe(0);
+    for (const night of [2, 3]) {
+      g.phase = 'day';
+      startNight(g);
+      expect(g.nightSteps.find((s) => s.role === 'troublemaker')?.active).toBe(true);
+      while (currentStep(g)?.role !== 'troublemaker') commitStep(g, {}, Date.now(), true);
+      commitStep(g, { swap: ['p4', 'p5'] });
+      expect(g.troublemakerSwap).toMatchObject({ night, applied: true });
+      expect(morningAnnouncement(g)).toContain(TROUBLEMAKER_NOTICE);
+    }
+    expect(g.troublemakerUses).toBe(2);
     g.phase = 'day';
     startNight(g);
-    expect(g.nightSteps.some((s) => s.role === 'troublemaker')).toBe(false);
+    expect(g.nightSteps.find((s) => s.role === 'troublemaker')?.active).toBe(false);
+    expect(buildPrivateView(roomOf(g), 'u0').troublemaker).toMatchObject({ left: 0 });
   });
 
   it('peran asli beraksi malam 1; kartu ditukar saat pagi, Troublemaker tetap Troublemaker', () => {
@@ -44,9 +57,9 @@ describe('Troublemaker', () => {
     toRole(g, 'troublemaker');
     commitStep(g, { swap: ['p1', 'p2'] });
     const room = roomOf(g);
-    expect(buildPrivateView(room, 'u0').troublemaker).toEqual({ swapped: ['p1', 'p2'] });
-    expect(buildPrivateView(room, 'u1').troublemaker).toEqual({ newRole: 'werewolf' });
-    expect(buildPrivateView(room, 'u2').troublemaker).toEqual({ newRole: 'seer' });
+    expect(buildPrivateView(room, 'u0').troublemaker).toEqual({ swapped: ['p1', 'p2'], night: 1, left: 1 });
+    expect(buildPrivateView(room, 'u1').troublemaker).toEqual({ newRole: 'werewolf', night: 1 });
+    expect(buildPrivateView(room, 'u2').troublemaker).toEqual({ newRole: 'seer', night: 1 });
     expect(buildPrivateView(room, 'u3').troublemaker).toBeUndefined();
     expect(JSON.stringify(buildPrivateView(room, 'u1'))).not.toContain('p0');
     expect(buildPublicView(room).cardsSwapped).toBe(true);
@@ -60,8 +73,8 @@ describe('Troublemaker', () => {
     commitStep(g, { swap: ['p0', 'p3'] }); // tukar Thief (sekarang Seer) dengan Werewolf
     expect(g.players.map((p) => p.role)).toEqual(['werewolf', 'troublemaker', 'villager', 'seer', 'villager', 'villager']);
     const room = roomOf(g);
-    expect(buildPrivateView(room, 'u0').troublemaker).toEqual({ newRole: 'werewolf' });
-    expect(buildPrivateView(room, 'u3').troublemaker).toEqual({ newRole: 'seer' });
+    expect(buildPrivateView(room, 'u0').troublemaker).toEqual({ newRole: 'werewolf', night: 1 });
+    expect(buildPrivateView(room, 'u3').troublemaker).toEqual({ newRole: 'seer', night: 1 });
   });
 
   it('tidak menukar = tidak ada pengumuman', () => {
