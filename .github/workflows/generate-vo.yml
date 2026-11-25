@@ -7,6 +7,8 @@ on:
       - src/game/voiceLines.ts
       - src/game/roles.ts
       - src/game/engine.ts
+      - src/game/pronounce.ts
+      - scripts/vo-lines.ts
       - scripts/generate_vo.py
       - .github/workflows/generate-vo.yml
 permissions:

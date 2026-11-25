@@ -61,7 +61,7 @@ export const ROLE_INFO: Record<Role, RoleInfo> = {
     tips: 'Jangan buka identitas terlalu cepat—kamu target utama serigala. Ingat, Lycan juga terlihat sebagai werewolf.',
   },
   bodyguard: {
-    name: 'Bodyguard', team: 'village', icon: '🛡️', colors: [rgb(0.05, 0.2, 0.4), rgb(0.3, 0.7, 1.0)],
+    name: 'Guardian', team: 'village', icon: '🛡️', colors: [rgb(0.05, 0.2, 0.4), rgb(0.3, 0.7, 1.0)],
     balance: 3, allowsMultiple: false, nightOrder: 1, looksLikeWerewolf: false,
     short: 'Setiap malam melindungi satu pemain dari serangan serigala. Tidak boleh orang yang sama dua malam berturut-turut.',
     tips: 'Lindungi pemain yang kamu duga Seer. Melindungi diri sendiri diperbolehkan.',
@@ -146,7 +146,7 @@ export const WAKE_SCRIPT: Partial<Record<Role, string>> = {
   thief: 'Thief, bangunlah. Tunjuk satu orang yang kartunya ingin kamu curi, atau simpan kesempatanmu untuk malam lain.',
   troublemaker: 'Troublemaker, bangunlah. Tunjuk dua orang yang kartunya ingin kamu tukar, atau simpan kesempatanmu.',
   cupid: 'Cupid, bangunlah. Tunjuk dua orang yang akan saling jatuh cinta.',
-  bodyguard: 'Bodyguard, bangunlah. Siapa yang ingin kamu lindungi malam ini?',
+  bodyguard: 'Guardian, bangunlah. Siapa yang ingin kamu lindungi malam ini?',
   werewolf: 'Para serigala, bangunlah. Sepakati satu korban yang akan kalian mangsa malam ini.',
   witch: 'Witch, bangunlah. Lihat korban malam ini. Ingin menyelamatkannya? Atau meracuni seseorang?',
   seer: 'Seer, bangunlah. Tunjuk satu orang yang ingin kamu ketahui identitasnya.',

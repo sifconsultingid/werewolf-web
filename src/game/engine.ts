@@ -453,7 +453,7 @@ export function nearestWerewolves(g: GameState, fromId: string): string[] {
 export interface StepInput {
   /** Cupid: dua kekasih */
   lovers?: [string, string];
-  /** Bodyguard, Werewolf, Seer, Diseased, Thief: satu target (Thief tanpa target = tidak mencuri) */
+  /** Guardian, Werewolf, Seer, Diseased, Thief: satu target (Thief tanpa target = tidak mencuri) */
   target?: string;
   /** Troublemaker: dua pemain yang kartunya ditukar (kosong = tidak menukar) */
   swap?: [string, string];
@@ -517,7 +517,7 @@ export function insomniacPeek(g: GameState, walk: boolean): InsomniacResult {
  * Menyelesaikan langkah malam yang sedang berjalan. Untuk langkah yang tidak aktif (pemegang peran
  * sudah mati), panggil tanpa input. Mengembalikan true jika malam selesai (pagi tiba).
  * Berbeda dari iOS (yang mewajibkan pilihan), di web narator boleh melewati langkah pemain yang
- * tidak merespons; Bodyguard/Werewolf/Seer tanpa target dianggap tidak beraksi.
+ * tidak merespons; Guardian/Werewolf/Seer tanpa target dianggap tidak beraksi.
  */
 export function commitStep(g: GameState, input: StepInput = {}, now = Date.now(), skip = false): boolean {
   const step = currentStep(g);

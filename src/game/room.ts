@@ -320,7 +320,7 @@ export interface ActionPrompt {
   victim?: string | null;
   canHeal?: boolean;
   canPoison?: boolean;
-  /** Bodyguard: tidak boleh melindungi orang ini */
+  /** Guardian: tidak boleh melindungi orang ini */
   lastProtected?: string | null;
   /** Necromancer: kekuatan sudah terpakai */
   used?: boolean;

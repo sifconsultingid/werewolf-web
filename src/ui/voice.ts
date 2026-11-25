@@ -6,6 +6,7 @@
 
 import type { Line, Narration } from '../game/narration';
 import { GREETING_SCRIPT, VOICE_CLIPS } from '../game/voiceLines';
+import { spoken } from '../game/pronounce';
 
 const PREF_KEY = 'ww:voice';
 /** Nilai voiceURI khusus untuk memakai klip rekaman. */
@@ -178,8 +179,9 @@ export function createVoice(): Voice {
       done();
     } else {
       if (!ttsSupported) { done(); return; }
-      const u = new SpeechSynthesisUtterance(item.text);
       const v = pickVoice();
+      // Suara Indonesia: nama peran Inggris pakai ejaan bunyi supaya tidak berlogat Indonesia
+      const u = new SpeechSynthesisUtterance(!v || isId(v) ? spoken(item.text) : item.text);
       if (v) u.voice = v;
       u.lang = v?.lang ?? 'id-ID';
       u.rate = prefs.rate;
