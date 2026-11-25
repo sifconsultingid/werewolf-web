@@ -24,7 +24,8 @@ function loadPrefs(): VoicePrefs {
   return d;
 }
 
-type Item = { kind: 'clip'; id: string } | { kind: 'tts'; text: string };
+/** `src` = efek suara (data URI) yang ikut antrean narasi, bukan klip rekaman. */
+type Item = { kind: 'clip'; id: string; src?: string } | { kind: 'tts'; text: string };
 
 export interface Voice {
   readonly supported: boolean;
@@ -61,6 +62,8 @@ export interface Voice {
    * Mengembalikan true jika diputar.
    */
   sfx(src: string): boolean;
+  /** Efek suara yang masuk antrean narasi (diputar berurutan, tidak memotong narator). */
+  cue(src: string): void;
   /** Contoh suara yang sedang dipilih. */
   test(): void;
   stop(): void;
@@ -154,8 +157,8 @@ export function createVoice(): Voice {
         if (text && my === gen) queue.unshift({ kind: 'tts', text });
         done();
       };
-      audio.src = clipUrl(item.id);
-      audio.playbackRate = prefs.rate;
+      audio.src = item.src ?? clipUrl(item.id);
+      audio.playbackRate = item.src ? 1 : prefs.rate;
       audio.play().then(() => {
         if (blocked) { blocked = false; notify(); }
       }).catch((e: unknown) => {
@@ -267,6 +270,7 @@ export function createVoice(): Voice {
       audio.play().catch(() => { /* belum diizinkan: lewati bip ini */ });
       return true;
     },
+    cue(src) { enqueue([{ kind: 'clip', id: 'sfx', src }]); },
     test() { stop(); enqueue(itemsFor([{ text: GREETING_SCRIPT, clips: ['greeting'] }])); },
     stop,
     onChange(fn) { listeners.push(fn); },

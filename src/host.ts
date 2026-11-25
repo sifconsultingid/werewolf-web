@@ -25,6 +25,7 @@ import {
 import { createVoice, RECORDED } from './ui/voice';
 import { createBeeper } from './ui/beep';
 import { createMusic, type Mood } from './ui/music';
+import { howlWav } from './ui/howl';
 
 const STORE = (code: string) => `ww:host:${code}`;
 export const LAST_HOST_KEY = 'ww:host:last';
@@ -91,6 +92,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   const music = createMusic();
   let voicePrimed = false;
   let timeUpSaid = '';
+  let prevWolfTarget: string | null = null;
 
   if (resumeCode) {
     try {
@@ -809,6 +811,10 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     patch(hostRoot, autoGame ? `<div class="wrap host-auto">${tapBanner}${html}</div>` : `${stars()}<main class="wrap host">${tapBanner}${html}</main>`, screen);
     const n = g ? narrationFor(g) : null;
     // Saat halaman baru dimuat (lanjutkan ruang), jangan langsung bicara; tombol 🔁 untuk mengulang.
+    // Serigala baru saja menetapkan korban: lolongan dulu, baru narasi berikutnya
+    const wolfTarget = g && g.phase === 'night' ? g.wolfTarget : null;
+    if (wolfTarget && !prevWolfTarget && voicePrimed) voice.cue(howlWav());
+    prevWolfTarget = wolfTarget;
     if (!voicePrimed) { voice.prime(n); voicePrimed = true; } else voice.narrate(n);
     music.setMood(g ? (g.phase as Mood) : null);
     tick();
