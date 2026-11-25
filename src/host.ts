@@ -24,6 +24,7 @@ import {
 } from './ui/common';
 import { createVoice, RECORDED } from './ui/voice';
 import { createBeeper } from './ui/beep';
+import { createMusic, type Mood } from './ui/music';
 
 const STORE = (code: string) => `ww:host:${code}`;
 export const LAST_HOST_KEY = 'ww:host:last';
@@ -87,6 +88,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   const lastSent = new Map<string, string>();
   let autoTimer: { key: string; at: number; handle: number } | null = null;
   const voice = createVoice();
+  const music = createMusic();
   let voicePrimed = false;
   let timeUpSaid = '';
 
@@ -362,6 +364,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     voiceUnlock: () => { voice.unlock(); render(); },
     voiceToggle: () => { voice.setEnabled(!voice.enabled); if (voice.enabled) voice.replay(); render(); },
     voiceReplay: () => { if (!voice.enabled) voice.setEnabled(true); voice.replay(); render(); },
+    musicToggle: () => { music.setEnabled(!music.enabled); render(); },
+    musicVolume: (arg) => { music.setVolume(music.volume + Number(arg)); render(); },
     voiceRate: (arg) => { voice.setRate(Math.round((voice.rate + Number(arg)) * 100) / 100); render(); },
     voiceTest: () => {
       if (!voice.enabled) voice.setEnabled(true);
@@ -461,13 +465,26 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${voice.usingRecorded() ? '<p class="muted tiny">Suara rekaman tidak menyebut nama pemain; nama tetap tampil di layar.</p>' : ''}
       ${!voice.usingRecorded() && list.length && !voice.hasIndonesian() ? '<p class="warn small">Perangkat ini belum punya suara Bahasa Indonesia, jadi logatnya mungkin aneh. Coba Chrome/Edge, atau pasang suara Indonesia di pengaturan sistem.</p>' : ''}` : ''}
       <p class="muted tiny">Suara diputar dari perangkat narator ini, jadi sambungkan ke speaker kalau main ramai-ramai.</p>
+    </div>${musicCard()}`;
+  }
+
+  function musicCard(): string {
+    if (!music.supported) return '';
+    const pct = Math.round(music.volume * 100);
+    return `<div class="card"><h3>🎵 Musik Latar</h3>
+      <label class="toggle"><input type="checkbox" data-act="musicToggle" ${music.enabled ? 'checked' : ''}><span>Putar musik latar tiap fase</span></label>
+      ${music.enabled ? `<div class="row between"><span>Volume musik</span><div class="stepper">
+        <button data-act="musicVolume" data-arg="-0.1" ${pct <= 0 ? 'disabled' : ''}>−</button><span>${pct}%</span>
+        <button data-act="musicVolume" data-arg="0.1" ${pct >= 100 ? 'disabled' : ''}>+</button></div></div>
+      <p class="muted tiny">Lagu beda untuk lihat kartu, malam, pagi, diskusi, voting, dan akhir permainan. Otomatis mengecil saat narator bicara.</p>` : ''}
     </div>`;
   }
 
   function voiceControls(): string {
     if (!voice.supported) return '';
     return `<button class="btn small ghost" data-act="voiceToggle" title="${voice.enabled ? 'Matikan' : 'Nyalakan'} voice-over">${voice.enabled ? '🔊' : '🔇'}</button>
-      <button class="btn small ghost" data-act="voiceReplay" title="Bacakan ulang narasi">🔁</button>`;
+      <button class="btn small ghost" data-act="voiceReplay" title="Bacakan ulang narasi">🔁</button>
+      ${music.supported ? `<button class="btn small ghost${music.enabled ? '' : ' off'}" data-act="musicToggle" title="${music.enabled ? 'Matikan' : 'Nyalakan'} musik latar">🎵</button>` : ''}`;
   }
 
   function hostModeCard(): string {
@@ -793,6 +810,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const n = g ? narrationFor(g) : null;
     // Saat halaman baru dimuat (lanjutkan ruang), jangan langsung bicara; tombol 🔁 untuk mengulang.
     if (!voicePrimed) { voice.prime(n); voicePrimed = true; } else voice.narrate(n);
+    music.setMood(g ? (g.phase as Mood) : null);
     tick();
   }
 
@@ -839,6 +857,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       if (!room?.auto?.paused) note(sec);
     });
     beeper.update(soonest);
+    music.setDucked(voice.isSpeaking() || !!room?.auto?.paused);
     hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
       el.textContent = at ? `${Math.max(0, Math.ceil((at - Date.now()) / 1000))} dtk` : '…';
@@ -849,7 +868,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   // Wake Lock butuh interaksi pengguna; coba lagi setiap kali host mengetuk layar
   app.addEventListener('click', () => { void keepAwake(); });
   // Safari iOS: suara baru boleh diputar setelah ada ketukan. Buka izinnya di ketukan apa pun.
-  for (const ev of ['touchend', 'click'] as const) document.addEventListener(ev, () => voice.unlock(), true);
+  for (const ev of ['touchend', 'click'] as const) document.addEventListener(ev, () => { voice.unlock(); music.unlock(); }, true);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { void keepAwake(); return; }
     // HP host dikunci / pindah aplikasi: jeda permainan (kecuali mode lokal, yang memang pindah-pindah tab)

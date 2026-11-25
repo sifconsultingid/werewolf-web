@@ -299,3 +299,6 @@ details summary { cursor: pointer; color: var(--muted); margin-top: 8px; }
 .wrap.host-auto { max-width: 560px; padding-bottom: 0; }
 .host-bar { flex-wrap: wrap; gap: 8px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; padding: 8px 12px; }
 #player-root[hidden] { display: none; }
+
+/* Tombol musik latar saat dimatikan */
+.btn.off { opacity: 0.4; text-decoration: line-through; }
