@@ -114,7 +114,7 @@ describe('malam', () => {
     expect(() => commitStep(g, { target: 'p3' })).toThrow(); // harus serigala
     commitStep(g, { target: 'p1' });
     expect(g.lastDeaths.map((d) => [d.playerId, d.cause])).toEqual([['p2', 'wolves'], ['p1', 'disease']]);
-    expect(g.seerHistory).toEqual([{ night: 1, targetId: 'p0', isWolf: true }]);
+    expect(g.seerHistory).toMatchObject([{ night: 1, targetId: 'p0', isWolf: true }]);
   });
 
   it('Diseased tidak dibangunkan jika dilindungi', () => {
@@ -171,7 +171,7 @@ describe('malam', () => {
     beginFirstRound(g2);
     commitStep(g2, { target: 'p1' });
     commitStep(g2, { walk: true });
-    expect(g2.insomniacHistory).toEqual([{ night: 1, walked: true, nearestWolfIds: ['p0'] }]);
+    expect(g2.insomniacHistory).toMatchObject([{ night: 1, walked: true, nearestWolfIds: ['p0'] }]);
   });
 });
 

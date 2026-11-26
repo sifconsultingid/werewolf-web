@@ -30,7 +30,12 @@ export interface Room {
   timings?: AutoTimings;
   /** State narator otomatis selama permainan berjalan */
   auto?: AutoState | null;
+  /** Permintaan kembali ke kursi dari perangkat/browser baru (uid baru → pid kursi), menunggu host */
+  reclaims?: Record<string, { pid: string; at: number }>;
 }
+
+/** Pesan galat pemain hanya tampil sebentar (tidak menempel sampai permainan selesai) */
+export const NOTICE_MS = 8000;
 
 export interface RoomOptions {
   autoNarrator?: boolean;
@@ -46,7 +51,9 @@ export type PlayerAction =
   | { type: 'peek'; target?: string; walk?: boolean }
   | { type: 'wolfVote'; target: string | null }
   | { type: 'vote'; target: string | null }
-  | { type: 'hunter'; target: string | null };
+  | { type: 'hunter'; target: string | null }
+  /** Pemain yang pindah perangkat/browser minta dikembalikan ke kursinya (disetujui host) */
+  | { type: 'reclaim'; pid: string | null };
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -112,6 +119,16 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
 
   if (action.type === 'hello') return false;
 
+  if (action.type === 'reclaim') {
+    if (seat || inLobby(room)) return false;
+    room.reclaims ??= {};
+    if (action.pid === null) { delete room.reclaims[uid]; return true; }
+    const target = room.seats.find((s) => s.pid === action.pid);
+    if (!target || target.uid === room.hostUid) return fail('Kursi tidak ditemukan.');
+    room.reclaims[uid] = { pid: target.pid, at: now };
+    return true;
+  }
+
   if (action.type === 'join') {
     const name = cleanName(action.name);
     if (!name) return fail('Nama tidak boleh kosong.');
@@ -134,13 +151,17 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
   if (!seat || !g) return false;
   const me = player(g, seat.pid);
   if (!me) return false;
+  // Saat dijeda host, tidak ada aksi permainan yang diproses (termasuk antrean lama saat host memuat ulang)
+  if (room.auto?.paused && action.type !== 'ready') return fail('Permainan sedang dijeda host.');
+  // Aksi sah berikutnya menghapus pesan galat lama
+  const ok = () => { delete room.notices[uid]; return true; };
 
   try {
     switch (action.type) {
       case 'ready':
         if (g.phase !== 'reveal' || g.ready.includes(me.id)) return false;
         g.ready.push(me.id);
-        return true;
+        return ok();
 
       case 'wolfVote': {
         const step = currentStep(g);
@@ -149,15 +170,15 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
         }
         if (action.target === null) {
           delete g.wolfVotes[me.id];
-          return true;
+          return ok();
         }
         if (!stepCandidates(g, 'werewolf').some((p) => p.id === action.target)) return fail('Target tidak sah.');
         g.wolfVotes[me.id] = action.target;
-        if (room.auto) return true; // narator otomatis menutup langkah setelah durasi minimum
+        if (room.auto) return ok(); // narator otomatis menutup langkah setelah durasi minimum
         const pack = alivePlayers(g).filter((p) => p.role === 'werewolf');
         const picks = pack.map((w) => g.wolfVotes[w.id]);
         if (picks.every((t) => t && t === picks[0])) commitStep(g, { target: picks[0] }, now);
-        return true;
+        return ok();
       }
 
       case 'night': {
@@ -170,10 +191,10 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
           // Validasi dulu di salinan, lalu tunggu durasi minimum langkah (lihat autoTick)
           commitStep(structuredClone(g), input, now);
           room.auto.pending = { stage: stageOf(g, room.auto).key, input };
-          return true;
+          return ok();
         }
         commitStep(g, input, now);
-        return true;
+        return ok();
       }
 
       case 'peek': {
@@ -182,17 +203,17 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
         if (step.role === 'seer' && typeof action.target === 'string') seerPeek(g, action.target);
         else if (step.role === 'insomniac') insomniacPeek(g, !!action.walk);
         else return fail('Aksi tidak sah.');
-        return true;
+        return ok();
       }
 
       case 'vote':
         castVote(g, me.id, action.target ?? null);
-        return true;
+        return ok();
 
       case 'hunter':
         if (g.pendingHunters[0] !== me.id) return fail('Bukan giliranmu.');
         hunterShoots(g, action.target ?? null);
-        return true;
+        return ok();
 
       default:
         return false;
@@ -229,7 +250,22 @@ function sanitizeInput(raw: StepInput | undefined): StepInput {
 export function startGame(room: Room, rng: Rng = Math.random): void {
   room.game = createGame(room.seats.map((s) => ({ id: s.pid, name: s.name })), room.counts, room.settings, rng);
   room.notices = {};
+  room.reclaims = {};
   room.auto = room.autoNarrator ? newAutoState() : null;
+}
+
+/** Host menyetujui (atau menolak) pemain yang kembali dari perangkat/browser baru. */
+export function resolveReclaim(room: Room, uid: string, approve: boolean): void {
+  const req = room.reclaims?.[uid];
+  if (!req) return;
+  delete room.reclaims![uid];
+  if (!approve || seatOf(room, uid)) return;
+  const seat = room.seats.find((s) => s.pid === req.pid);
+  if (!seat || seat.uid === room.hostUid) return;
+  delete room.notices[seat.uid];
+  seat.uid = uid;
+  // Permintaan lain untuk kursi yang sama tidak berlaku lagi
+  for (const [u, r] of Object.entries(room.reclaims!)) if (r.pid === req.pid) delete room.reclaims![u];
 }
 
 /** Kembali ke lobi dengan pemain yang sama (untuk main lagi). */
@@ -237,6 +273,7 @@ export function backToLobby(room: Room): void {
   room.game = null;
   room.auto = null;
   room.notices = {};
+  room.reclaims = {};
   syncAutoCounts(room);
 }
 
@@ -328,6 +365,8 @@ export interface ActionPrompt {
   peeked?: { pid: string; isWolf: boolean };
   /** Insomniac: keputusan malam ini */
   walked?: { walked: boolean; nearestWolves: string[] };
+  /** Troublemaker: sisa kesempatan menukar */
+  left?: number;
 }
 
 export interface PrivateView {
@@ -336,6 +375,8 @@ export interface PrivateView {
   pid?: string;
   name?: string;
   notice?: string;
+  /** Menunggu host menyetujui kembali ke kursi ini */
+  reclaiming?: string;
   role?: Role;
   team?: Team;
   alive?: boolean;
@@ -355,24 +396,31 @@ export interface PrivateView {
   updatedAt: number;
 }
 
-function roleIsPublic(g: GameState, pid: string): boolean {
+/**
+ * Peran yang boleh dilihat semua orang untuk kursi ini (undefined = rahasia).
+ * Prince yang selamat dari voting tetap tampil sebagai Prince: itu fakta yang sudah diumumkan.
+ * Kalau kartunya kemudian dicuri/ditukar, peran barunya TIDAK boleh ikut terbuka.
+ */
+function publicRole(g: GameState, pid: string): Role | undefined {
   const p = player(g, pid);
-  if (!p) return false;
-  if (g.phase === 'gameOver') return true;
-  if (p.princeRevealed) return true;
-  if (p.isAlive) return false;
-  if (g.settings.revealRoleOnDeath) return true;
+  if (!p) return undefined;
+  if (g.phase === 'gameOver') return p.role;
+  if (!p.isAlive && g.settings.revealRoleOnDeath) return p.role;
   // Tanner yang dieksekusi selalu terbuka
-  return p.role === 'tanner' && g.executedId === p.id;
+  if (!p.isAlive && p.role === 'tanner' && g.executedId === p.id) return p.role;
+  if (p.princeRevealed) return 'prince';
+  return undefined;
 }
 
 function publicDeaths(g: GameState, list: { playerId: string; cause: DeathCause }[]): PublicDeath[] {
-  return list.map((d) => ({
-    pid: d.playerId,
-    cause: d.cause,
-    role: roleIsPublic(g, d.playerId) || (d.cause === 'vote' && player(g, d.playerId)?.role === 'tanner')
-      ? player(g, d.playerId)?.role : undefined,
-  }));
+  return list.map((d) => {
+    const p = player(g, d.playerId);
+    return {
+      pid: d.playerId,
+      cause: d.cause,
+      role: (d.cause === 'vote' && p?.role === 'tanner') ? p.role : publicRole(g, d.playerId),
+    };
+  });
 }
 
 export function buildPublicView(room: Room, now = Date.now()): PublicView {
@@ -400,7 +448,7 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
       pid: p.id,
       name: p.name,
       alive: p.isAlive,
-      role: roleIsPublic(g, p.id) ? p.role : undefined,
+      role: publicRole(g, p.id),
       princeRevealed: p.princeRevealed || undefined,
       ready: g.phase === 'reveal' ? g.ready.includes(p.id) : undefined,
     })),
@@ -469,6 +517,8 @@ function actionFor(g: GameState, pid: string, auto?: AutoState | null): ActionPr
       const h = g.insomniacHistory.find((x) => x.night === g.nightNumber);
       return { key, kind: 'insomniac', candidates, walked: h ? { walked: h.walked, nearestWolves: h.nearestWolfIds } : undefined };
     }
+    case 'troublemaker':
+      return { key, kind: 'troublemaker', candidates, left: troublemakerLeft(g) };
     default:
       return { key, kind: step.role, candidates };
   }
@@ -476,8 +526,9 @@ function actionFor(g: GameState, pid: string, auto?: AutoState | null): ActionPr
 
 export function buildPrivateView(room: Room, uid: string, now = Date.now()): PrivateView {
   const seat = seatOf(room, uid);
-  const notice = room.notices[uid]?.text;
-  if (!seat) return { v: 1, joined: false, notice, updatedAt: now };
+  const n = room.notices[uid];
+  const notice = n && now - n.at < NOTICE_MS ? n.text : undefined;
+  if (!seat) return { v: 1, joined: false, notice, reclaiming: room.reclaims?.[uid]?.pid, updatedAt: now };
   const g = room.game;
   const base: PrivateView = { v: 1, joined: true, pid: seat.pid, name: seat.name, notice, updatedAt: now };
   if (!g) return base;
@@ -495,8 +546,12 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
     if (currentStep(g)?.role === 'werewolf') view.wolfVotes = { ...g.wolfVotes };
   }
   if (g.lovers.includes(me.id)) view.lover = g.lovers.find((l) => l !== me.id);
-  if (me.role === 'cupid' && g.lovers.length) view.coupled = [...g.lovers];
-  if (me.role === 'seer') view.seerHistory = g.seerHistory.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
+  // Catatan rahasia ikut ORANG yang melakukannya, bukan kartunya (kartu bisa dicuri/ditukar).
+  // State lama tanpa `by`/`cupidId`: pakai pemegang kartu saat ini.
+  const mine = (by: string | undefined, role: Role) => (by ? by === me.id : me.role === role);
+  if (g.lovers.length && (g.cupidId != null ? g.cupidId === me.id : me.role === 'cupid')) view.coupled = [...g.lovers];
+  const seen = g.seerHistory.filter((s) => mine(s.by, 'seer'));
+  if (seen.length || me.role === 'seer') view.seerHistory = seen.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
   const swap = g.thiefSwap;
   // Korban baru tahu saat pagi (kartu ditukar saat pagi); Thief langsung tahu curiannya
   if (swap && (swap.thiefId === me.id || (swap.applied && swap.targetId === me.id))) {
@@ -504,16 +559,16 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
     // Korban tidak diberi tahu siapa Thiefnya
     view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole, night: swap.night ?? 1 };
   }
-  const tm = g.troublemakerSwap;
-  if (tm) {
-    const idx = tm.pids.indexOf(me.id);
-    // Korban baru tahu saat pagi; Troublemaker tahu siapa yang ditukar tapi tidak melihat kartunya
-    const night = tm.night ?? 1;
-    if (idx >= 0 && tm.applied && tm.newRoles) view.troublemaker = { newRole: tm.newRoles[idx], night };
-    else if (tm.troublemakerId === me.id) view.troublemaker = { swapped: [...tm.pids], night, left: troublemakerLeft(g) };
-  }
-  if (me.role === 'insomniac') {
-    view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));
+  const swaps = g.troublemakerHistory?.length ? g.troublemakerHistory : g.troublemakerSwap ? [g.troublemakerSwap] : [];
+  // Korban baru tahu saat pagi; Troublemaker tahu siapa yang ditukar tapi tidak melihat kartunya.
+  // Peran baru korban = perannya sekarang (bisa sudah berubah lagi setelah itu).
+  const hit = [...swaps].reverse().find((t) => t.applied && t.pids.includes(me.id));
+  const own = [...swaps].reverse().find((t) => t.troublemakerId === me.id);
+  if (hit && (!own || (hit.night ?? 1) >= (own.night ?? 1))) view.troublemaker = { newRole: me.role, night: hit.night ?? 1 };
+  else if (own) view.troublemaker = { swapped: [...own.pids], night: own.night ?? 1, left: troublemakerLeft(g) };
+  const walks = g.insomniacHistory.filter((h) => mine(h.by, 'insomniac'));
+  if (walks.length || me.role === 'insomniac') {
+    view.insomniacHistory = walks.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));
   }
   return view;
 }

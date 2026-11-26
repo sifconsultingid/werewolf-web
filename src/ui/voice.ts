@@ -143,13 +143,36 @@ export function createVoice(): Voice {
     return id.find((v) => /natural|online|google/i.test(v.name)) ?? id[0] ?? null;
   };
 
+  // Pengaman per item: klip yang macet (sinyal jelek, `ended`/`error` tidak pernah datang) atau
+  // TTS yang tidak memanggil `onend` (sering di iOS) tidak boleh membuat semua narasi berikutnya diam.
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+  const clearWatchdog = () => { if (watchdog) { clearTimeout(watchdog); watchdog = null; } };
+
   function next() {
     const my = gen;
+    clearWatchdog();
     const item = queue.shift();
     if (!item) { playing = false; return; }
     playing = true;
-    const done = () => { if (my === gen) next(); };
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      clearWatchdog();
+      if (my === gen) next();
+    };
+    const arm = (ms: number, onTimeout: () => void) => {
+      clearWatchdog();
+      watchdog = setTimeout(() => { if (!finished && my === gen) { onTimeout(); done(); } }, ms);
+    };
     if (item.kind === 'clip' && audio) {
+      const giveUp = () => { audio.onended = null; audio.onerror = null; audio.pause(); };
+      // Belum tahu durasinya: tunggu maksimal 12 dtk sampai klip mulai; setelah durasi diketahui, durasi + 4 dtk
+      arm(12000, giveUp);
+      audio.onloadedmetadata = () => {
+        const d = audio.duration;
+        if (!finished && my === gen && Number.isFinite(d) && d > 0) arm((d / (audio.playbackRate || 1)) * 1000 + 4000, giveUp);
+      };
       audio.onended = done;
       audio.onerror = () => {
         // Klip hilang → bacakan teksnya dengan suara browser.
@@ -167,6 +190,8 @@ export function createVoice(): Voice {
           // Belum diizinkan: tahan klip ini sampai pengguna mengetuk layar.
           audio.onended = null;
           audio.onerror = null;
+          finished = true;
+          clearWatchdog();
           queue.unshift(item);
           playing = false;
           if (!blocked) { blocked = true; notify(); }
@@ -186,6 +211,7 @@ export function createVoice(): Voice {
       u.pitch = 0.9;
       u.onend = done;
       u.onerror = done;
+      arm(8000 + (item.text.length * 120) / prefs.rate, () => { synth!.cancel(); });
       synth!.speak(u);
     }
   }
@@ -198,6 +224,7 @@ export function createVoice(): Voice {
 
   function stop() {
     gen++;
+    clearWatchdog();
     queue = [];
     playing = false;
     if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); }
@@ -250,6 +277,9 @@ export function createVoice(): Voice {
     narrate(n) {
       if (!n) { lastKey = ''; lastLines = []; return; }
       let from = 0;
+      // Audio masih ditolak browser (belum ada ketukan): narasi tahap lama jangan ikut diputar nanti,
+      // supaya setelah diketuk yang terdengar narasi tahap SEKARANG, bukan tumpukan yang sudah lewat.
+      if (blocked && n.key !== lastKey) queue = [];
       if (n.key === lastKey) {
         while (from < n.lines.length && from < lastLines.length && n.lines[from].text === lastLines[from].text) from++;
       }

@@ -123,6 +123,10 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
       vibrate(20);
       void send({ type: 'vote', target: mine === pid ? null : pid });
     },
+    reclaim: (pid) => {
+      if (pid && !confirm(`Kembali ke kursi ${nameOf(pid)}? Host harus menyetujui.`)) return;
+      void send({ type: 'reclaim', pid: pid || null });
+    },
     newIdentity: () => {
       if (!confirm('Masuk sebagai pemain baru di tab ini?')) return;
       (backend as any).resetIdentity?.();
@@ -171,19 +175,28 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     return notes.length ? `<div class="notes">${notes.map((n) => `<div>${n}</div>`).join('')}</div>` : '';
   }
 
+  /** Peran yang dipegang sekarang (kartu bisa sudah pindah lagi setelah dicuri/ditukar) */
+  function nowRole(): string {
+    const r = priv?.role ? ROLE_INFO[priv.role] : null;
+    return r ? `<b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]})` : '';
+  }
+
   function thiefNote(t: NonNullable<PrivateView['thief']>): string {
     const r = ROLE_INFO[t.stolenRole];
-    return t.stole
-      ? `🦹 Kamu mencuri kartu <b>${esc(nameOf(t.otherPid))}</b>: ${pub?.phase === 'night' ? 'mulai pagi ini' : 'sekarang'} kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`
-      : `🦹 Kartumu (${r.icon} ${esc(r.name)}) dicuri Thief! Sekarang kamu <b>Villager</b>.`;
+    const card = `<b>${r.icon} ${esc(r.name)}</b>`;
+    if (t.stole) {
+      return pub?.phase === 'night' && pub.nightNumber === t.night
+        ? `🦹 Kamu mencuri kartu ${card} milik <b>${esc(nameOf(t.otherPid))}</b>. Mulai pagi ini kamu jadi peran itu.`
+        : `🦹 Kamu mencuri kartu ${card} milik <b>${esc(nameOf(t.otherPid))}</b>. Sekarang kamu ${nowRole()}.`;
+    }
+    return `🦹 Kartumu (${card}) dicuri Thief! Sekarang kamu ${nowRole()}.`;
   }
 
   function troublemakerNote(t: NonNullable<PrivateView['troublemaker']>): string {
     if ('swapped' in t) {
-      return `🃏 Kamu menukar kartu <b>${t.swapped.map((p) => esc(nameOf(p))).join('</b> dan <b>')}</b>${pub?.phase === 'night' ? ' (berlaku mulai pagi ini)' : ''}. Kamu tidak tahu kartu mereka.`;
+      return `🃏 Kamu menukar kartu <b>${t.swapped.map((p) => esc(nameOf(p))).join('</b> dan <b>')}</b>${pub?.phase === 'night' && pub.nightNumber === t.night ? ' (berlaku mulai pagi ini)' : ''}. Kamu tidak tahu kartu mereka.`;
     }
-    const r = ROLE_INFO[t.newRole];
-    return `🃏 Kartumu ditukar Troublemaker! Sekarang kamu <b>${r.icon} ${esc(r.name)}</b> (${TEAM_NAME[r.team]}).`;
+    return `🃏 Kartumu ditukar Troublemaker! Sekarang kamu ${nowRole()}.`;
   }
 
   function cardOverlay(): string {
@@ -292,7 +305,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
         break;
       case 'troublemaker': {
         const two = ui.sel.length === 2;
-        const left = priv?.troublemaker && 'left' in priv.troublemaker ? priv.troublemaker.left : 2;
+        const left = a.left ?? (priv?.troublemaker && 'left' in priv.troublemaker ? priv.troublemaker.left : 2);
         body = `<p class="center small">Pilih 2 orang yang kartunya ditukar (${ui.sel.length}/2). Kamu tidak melihat kartu mereka; mulai pagi mereka saling bertukar peran.</p>
           <p class="center small muted">Sisa kesempatan: <b>${left}</b>×. Boleh disimpan untuk malam lain.</p>
           ${grid(a.candidates, 'sel2', { tint: '#e0995a' })}
@@ -442,6 +455,21 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
       })).join('')}</div></div>`;
   }
 
+  /** Permainan sudah mulai tapi perangkat/browser ini belum punya kursi: minta host mengembalikan ke kursinya. */
+  function reclaimView(): string {
+    const p = pub!;
+    const req = priv?.reclaiming;
+    const seats = p.seats.filter((s) => s.pid !== p.hostPid);
+    return `<header class="hero"><div class="title">WEREWOLF</div><div class="subtitle">Ruang ${esc(code)}</div></header>
+      <div class="card"><p class="warn">Permainan sedang berlangsung.</p>
+        ${req
+          ? `<p>Menunggu host menyetujui kamu kembali sebagai <b>${esc(nameOf(req))}</b>…</p>
+             <button class="btn small ghost" data-act="reclaim" data-arg="">Batal</button>`
+          : `<p class="small">Tadi sudah ikut main tapi pindah HP/browser? Ketuk namamu, lalu host akan menyetujui. Kalau belum ikut, tunggu permainan berikutnya.</p>
+             <div class="chips">${seats.map((s) => chip({ pid: s.pid, name: s.name, alive: s.alive, act: 'reclaim' })).join('')}</div>`}
+        ${priv?.notice ? `<p class="warn small">${esc(priv.notice)}</p>` : ''}</div>`;
+  }
+
   function render() {
     document.body.dataset.phase = pub?.phase ?? 'lobby';
     let html = '';
@@ -450,6 +478,8 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
     if (!pub) {
       html = `<div class="card center"><div class="spinner"></div><p>Menghubungkan ke ruang <b>${esc(code)}</b>…</p>
         ${waitedLong ? `<p class="warn small">Ruang belum ditemukan. Pastikan kode benar dan narator sudah membuat ruang${backend.localOnly ? ' di browser yang sama (mode lokal)' : ''}.</p>` : ''}</div>`;
+    } else if (!priv?.joined && pub.phase !== 'lobby') {
+      html = reclaimView();
     } else if (!priv?.joined || ui.editName) {
       const started = pub.phase !== 'lobby' && !priv?.joined;
       let saved = '';
@@ -497,7 +527,7 @@ export function startPlayer(app: HTMLElement, backend: Backend, code: string): v
       el.classList.toggle('low', rem <= 10);
       if (pub!.discussionPausedRemaining === null) note(rem);
     });
-    beeper.update(soonest);
+    beeper.update(soonest, 'player');
   }
 
   delegate(app, handlers);
