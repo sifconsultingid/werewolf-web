@@ -8,8 +8,12 @@ const WARN_FROM = 10;
 type Kind = 'tick' | 'urgent' | 'end';
 
 export interface Beeper {
-  /** Panggil sesering mungkin dengan sisa detik timer yang tampil (null = tidak ada timer). */
-  update(secondsLeft: number | null): void;
+  /**
+   * Panggil sesering mungkin dengan sisa detik timer yang tampil (null = tidak ada timer).
+   * `source` membedakan layar yang memanggil (di HP host: layar host & layar pemain milik host),
+   * supaya satu layar tanpa timer tidak me-reset hitungan layar lain (bip dobel).
+   */
+  update(secondsLeft: number | null, source?: string): void;
   /** Pakai pemutar narator untuk bip (HP host). */
   attachVoice(voice: Voice): void;
 }
@@ -63,10 +67,17 @@ function makeBeeper(): Beeper {
     typeof window !== 'undefined' ? (window.AudioContext ?? (window as any).webkitAudioContext) : undefined;
   let ctx: AudioContext | null = null;
   let last: number | null = null;
+  /** Nilai terakhir dari tiap layar; yang tidak melapor > 1,5 dtk dianggap sudah tidak ada */
+  const sources = new Map<string, { sec: number | null; at: number }>();
   let voice: Voice | null = null;
   const wavs: Partial<Record<Kind, string>> = {};
 
   const ensure = () => {
+    // iOS 17+: tetap bunyi walau saklar silent menyala (kategori "playback")
+    try {
+      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+      if (session && session.type !== 'playback') session.type = 'playback';
+    } catch { /* */ }
     if (!AC) return null;
     if (!ctx) { try { ctx = new AC(); } catch { return null; } }
     if (ctx.state === 'suspended') void ctx.resume().catch(() => { /* */ });
@@ -95,6 +106,15 @@ function makeBeeper(): Beeper {
     }
   }
 
+  /** iPhone tidak bisa bergetar dari web: kedipkan layar sebagai pengganti tanda visual */
+  function flash(s: number) {
+    if (typeof document === 'undefined') return;
+    const b = document.body;
+    b.classList.remove('beep-flash', 'beep-flash-urgent');
+    void b.offsetWidth; // ulang animasi
+    b.classList.add(s <= 3 ? 'beep-flash-urgent' : 'beep-flash');
+  }
+
   function play(kind: Kind) {
     if (voice) {
       // Ikut tombol suara narator; dilewati kalau narator sedang bicara
@@ -106,12 +126,20 @@ function makeBeeper(): Beeper {
 
   return {
     attachVoice(v) { voice = v; },
-    update(secondsLeft) {
-      if (secondsLeft === null || secondsLeft > WARN_FROM) { last = null; return; }
-      const s = Math.max(0, Math.ceil(secondsLeft));
+    update(secondsLeft, source = 'main') {
+      const now = Date.now();
+      sources.set(source, { sec: secondsLeft, at: now });
+      let soonest: number | null = null;
+      for (const [k, v] of sources) {
+        if (now - v.at > 1500) { sources.delete(k); continue; }
+        if (v.sec !== null && (soonest === null || v.sec < soonest)) soonest = v.sec;
+      }
+      if (soonest === null || soonest > WARN_FROM) { last = null; return; }
+      const s = Math.max(0, Math.ceil(soonest));
       if (s === last) return;
       last = s;
       play(s === 0 ? 'end' : s <= 3 ? 'urgent' : 'tick');
+      flash(s);
       try { navigator.vibrate?.(s === 0 ? [300, 100, 300] : s <= 3 ? 120 : 60); } catch { /* */ }
     },
   };

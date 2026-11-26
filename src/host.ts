@@ -10,11 +10,11 @@ import {
 } from './game/engine';
 import {
   applyPlayerAction, backToLobby, buildPrivateView, buildPublicView, createRoom, moveSeat, randomCode,
-  removeSeat, startGame, syncAutoCounts, type PlayerAction, type Room,
+  removeSeat, resolveReclaim, startGame, syncAutoCounts, type PlayerAction, type Room,
 } from './game/room';
 import { ROLES, ROLE_INFO, sleepScript, WAKE_SCRIPT, type Role, type RoleCounts } from './game/roles';
 import {
-  adjustStageTime, autoTick, DEFAULT_TIMINGS, finishStageNow, hostCanControl, setPaused, type AutoTimings,
+  adjustStageTime, autoTick, DEFAULT_TIMINGS, finishStageNow, hostCanControl, NIGHT_DEAD_MS, setPaused, type AutoTimings,
 } from './game/auto';
 import { HUNTER_SCRIPT, narrationFor, NIGHT_FALLS, MORNING_COMES, TIME_UP_SCRIPT, VOTE_SCRIPT } from './game/narration';
 import type { Backend, Unsub } from './net/backend';
@@ -80,6 +80,11 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   const playerRoot = app.querySelector<HTMLElement>('#player-root')!;
   let loop: ReturnType<typeof loopback> | null = null;
   let speakingSince = 0;
+  let blockedSince = 0;
+  /** Ruang ini sedang dipegang tab/jendela lain di browser yang sama: tab ini diam saja */
+  let standby = false;
+  const TAB_ID = Math.random().toString(36).slice(2);
+  let lockWrittenAt = 0;
   let lastBeat = 0;
   let wakeLock: { release(): Promise<void> } | null = null;
   let showSecrets = true;
@@ -133,8 +138,44 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     return u.toString();
   };
 
+  // MARK: Kunci antar-tab
+  // Dua tab host di browser yang sama punya uid Firebase yang sama, jadi dua-duanya bisa memproses
+  // aksi dan menulis state → permainan pecah. Hanya satu tab yang memegang kunci; tab lain standby.
+  const LOCK = (code: string) => `ww:host:lock:${code}`;
+  const LOCK_STALE_MS = 5000;
+  function otherTabHolds(): boolean {
+    if (!room || backend.localOnly) return false;
+    try {
+      const raw = localStorage.getItem(LOCK(room.code));
+      const l = raw ? JSON.parse(raw) as { tab: string; at: number } : null;
+      return !!l && l.tab !== TAB_ID && Date.now() - l.at < LOCK_STALE_MS;
+    } catch { return false; }
+  }
+  function holdLock(force = false) {
+    if (!room || backend.localOnly) return;
+    const now = Date.now();
+    if (!force && now - lockWrittenAt < 1000) return;
+    lockWrittenAt = now;
+    try { localStorage.setItem(LOCK(room.code), JSON.stringify({ tab: TAB_ID, at: now })); } catch { /* */ }
+  }
+  /** Cek kunci; kembalikan true jika tab ini boleh menjalankan ruang. */
+  function checkLock(): boolean {
+    if (!room) return true;
+    if (standby) return false;
+    if (otherTabHolds()) {
+      standby = true;
+      unsubActions?.();
+      unsubActions = null;
+      voice.stop();
+      render();
+      return false;
+    }
+    holdLock();
+    return true;
+  }
+
   function persist() {
-    if (!room) return;
+    if (!room || standby) return;
     try {
       localStorage.setItem(STORE(room.code), JSON.stringify(room));
       localStorage.setItem(LAST_HOST_KEY, room.code);
@@ -142,23 +183,30 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   }
 
   async function publish() {
-    if (!room) return;
+    if (!room || standby) return;
     const now = Date.now();
+    const code = room.code;
     const pub = JSON.stringify(buildPublicView(room, now));
-    if (lastSent.get('*') !== stripTime(pub)) {
-      lastSent.set('*', stripTime(pub));
-      await backend.publishPublic(room.code, JSON.parse(pub));
-    }
+    // Semua tulisan dikirim sekaligus (tidak menunggu satu per satu). Yang gagal dihapus dari
+    // `lastSent` supaya dikirim ulang di commit/detak berikutnya, bukan tertinggal basi.
+    const writes: Promise<void>[] = [];
+    const send = (key: string, body: string, write: () => Promise<void>) => {
+      if (lastSent.get(key) === stripTime(body)) return;
+      lastSent.set(key, stripTime(body));
+      writes.push(write().catch((e) => { if (lastSent.get(key) === stripTime(body)) lastSent.delete(key); throw e; }));
+    };
+    send('*', pub, () => backend.publishPublic(code, JSON.parse(pub)));
     if (loop && room.hostUid) loop.push(JSON.parse(pub), buildPrivateView(room, room.hostUid, now));
-    const uids = new Set<string>([...room.seats.map((s) => s.uid), ...Object.keys(room.notices), ...knownUids]);
+    const uids = new Set<string>([
+      ...room.seats.map((s) => s.uid), ...Object.keys(room.notices), ...Object.keys(room.reclaims ?? {}), ...knownUids,
+    ]);
     if (room.hostUid) uids.delete(room.hostUid); // layar pemain host dilayani lewat loopback
     for (const uid of uids) {
       const priv = JSON.stringify(buildPrivateView(room, uid, now));
-      if (lastSent.get(uid) !== stripTime(priv)) {
-        lastSent.set(uid, stripTime(priv));
-        await backend.publishPrivate(room.code, uid, JSON.parse(priv));
-      }
+      send(uid, priv, () => backend.publishPrivate(code, uid, JSON.parse(priv)));
     }
+    const failed = (await Promise.allSettled(writes)).find((r) => r.status === 'rejected');
+    if (failed) throw (failed as PromiseRejectedResult).reason;
   }
 
   const stripTime = (s: string) => s.replace(/"updatedAt":\d+/, '');
@@ -177,7 +225,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   }
 
   function listen() {
-    if (!room || unsubActions) return;
+    if (!room || unsubActions || standby) return;
     unsubActions = backend.onActions(room.code, (uid, action) => {
       if (!room) return;
       knownUids.add(uid);
@@ -198,7 +246,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     }
     if (autoTimer?.key === key) return;
     if (autoTimer) clearTimeout(autoTimer.handle);
-    const delay = 5000 + Math.random() * 4000;
+    // Rentang lebar seperti pemain sungguhan yang sedang memilih (jeda tetap 5–9 dtk mudah dikenali)
+    const delay = NIGHT_DEAD_MS[0] + Math.random() * (NIGHT_DEAD_MS[1] - NIGHT_DEAD_MS[0]);
     autoTimer = {
       key, at: Date.now() + delay,
       handle: window.setTimeout(function fire() {
@@ -291,6 +340,29 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       void keepAwake();
       commit();
     },
+    takeOver: () => {
+      if (!room) return;
+      // Ambil state terbaru yang disimpan tab lain, lalu pegang kunci
+      try {
+        const raw = localStorage.getItem(STORE(room.code));
+        if (raw) room = JSON.parse(raw) as Room;
+      } catch { /* */ }
+      holdLock(true);
+      standby = false;
+      lastSent.clear();
+      if (room?.game && room.auto) setPaused(room.game, room.auto, true, Date.now());
+      listen();
+      commit();
+    },
+    reclaimOk: (uid) => {
+      if (!room) return;
+      const old = room.seats.find((s) => s.pid === room!.reclaims?.[uid]?.pid)?.uid;
+      resolveReclaim(room, uid, true);
+      lastSent.delete(uid);
+      if (old) lastSent.delete(old);
+      commit();
+    },
+    reclaimNo: (uid) => { if (room) { resolveReclaim(room, uid, false); lastSent.delete(uid); commit(); } },
     stageNow: () => guard(() => {
       if (room?.game && room.auto) finishStageNow(room.game, room.auto, Date.now());
     }),
@@ -765,7 +837,21 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const alive = g.players.filter((p) => p.isAlive).length;
     return `<header class="topbar"><div><b>Ruang ${esc(r.code)}</b> <span class="muted">• ${alive}/${g.players.length} hidup</span></div>
       <div class="row">${voiceControls()}<button class="btn small ghost" data-act="endRoom">Tutup ruang</button></div></header>
-      <div class="grid2 game"><div>${main}</div><div>${secretsPanel(g)}</div></div>`;
+      ${reclaimCard(r)}<div class="grid2 game"><div>${main}</div><div>${secretsPanel(g)}</div></div>`;
+  }
+
+  /** Pemain yang pindah HP/browser minta kembali ke kursinya (host harus kenal orangnya). */
+  function reclaimCard(r: Room): string {
+    const reqs = Object.entries(r.reclaims ?? {});
+    if (!reqs.length) return '';
+    return `<div class="card warn-card"><h3>🔁 Minta kembali ke kursi</h3>
+      <p class="muted small">Setujui hanya kalau orangnya memang pemain itu (mis. HP-nya mati atau pindah browser). Perangkat lamanya akan terputus.</p>
+      ${reqs.map(([uid, q]) => {
+        const seat = r.seats.find((s) => s.pid === q.pid);
+        return `<div class="row between"><span>Kursi <b>${esc(seat?.name ?? '?')}</b></span>
+          <div class="row"><button class="btn small primary" data-act="reclaimOk" data-arg="${esc(uid)}">Setujui</button>
+          <button class="btn small ghost" data-act="reclaimNo" data-arg="${esc(uid)}">Tolak</button></div></div>`;
+      }).join('')}</div>`;
   }
 
   /** Mode host ikut main: hanya bar kontrol kecil, tanpa info rahasia apa pun. */
@@ -778,7 +864,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
         : `<button class="btn small ${paused ? 'primary' : ''}" data-act="pause">${paused ? '▶️ Lanjut' : '⏸ Jeda'}</button>`}
       <button class="btn small ghost" data-act="endRoom">Tutup</button></div></header>
       ${paused ? '<p class="warn small center">Permainan dijeda. Tekan ▶️ Lanjut untuk meneruskan.</p>' : '<p class="muted tiny center">Suara narator diputar dari HP ini. Jangan kunci layar.</p>'}
-      ${stageControls(r, g)}`;
+      ${reclaimCard(r)}${stageControls(r, g)}`;
   }
 
   /** Kontrol waktu host untuk tahap lihat kartu, diskusi, dan voting. */
@@ -804,6 +890,13 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (autoGame) ensurePlayerView();
     playerRoot.hidden = !autoGame;
     if (!autoGame) document.body.dataset.phase = g?.phase ?? 'setup';
+    if (standby) {
+      playerRoot.hidden = true;
+      patch(hostRoot, `${stars()}<main class="wrap host"><div class="card center"><h2>🗂️ Ruang dibuka di tab lain</h2>
+        <p>Ruang ${esc(room?.code ?? '')} sedang dijalankan di tab/jendela lain di browser ini. Supaya permainan tidak kacau, tab ini berhenti.</p>
+        <button class="btn primary block" data-act="takeOver">Pakai tab ini saja</button></div></main>`, 'standby');
+      return;
+    }
     const html = !room ? renderSetup() : !g ? renderLobby(room) : autoGame ? renderAutoBar(room, g) : renderGame(room, g);
     const screen = !room ? 'setup' : !g ? 'lobby' : autoGame ? 'auto' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
     const tapBanner = g && voice.enabled && voice.blocked
@@ -821,6 +914,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   }
 
   function tick() {
+    if (!checkLock()) return;
     const g = room?.game;
     if (g && g.phase === 'day' && g.discussionEndsAt !== null) {
       const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
@@ -832,11 +926,15 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     }
     if (room && g && room.auto) {
       const now = Date.now();
-      // Pengaman: jika status "sedang bicara" macet, jangan tahan permainan lebih dari 30 detik
+      // Pengaman: tiap klip sudah punya batas waktu sendiri (voice.ts), jadi yang bisa macet hanya
+      // audio yang ditolak browser (belum diketuk): tahan maksimal 30 dtk. Narasi asli boleh panjang
+      // (mis. pagi dengan banyak korban), batas kerasnya 2 menit.
       const talking = voice.isSpeaking();
       if (!talking) speakingSince = 0;
       else if (!speakingSince) speakingSince = now;
-      const speaking = talking && now - speakingSince < 30000;
+      if (!voice.blocked) blockedSince = 0;
+      else if (!blockedSince) blockedSince = now;
+      const speaking = talking && (voice.blocked ? now - blockedSince < 30000 : now - speakingSince < 120000);
       let changed = false;
       try { changed = autoTick(g, room.auto, now, { speaking, timings: room.timings }); } catch (e) { console.error(e); }
       if (changed) commit();
@@ -862,7 +960,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       el.textContent = fmtTime(sec);
       if (!room?.auto?.paused) note(sec);
     });
-    beeper.update(soonest);
+    beeper.update(soonest, 'host');
     music.setDucked(voice.isSpeaking() || !!room?.auto?.paused);
     hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
@@ -878,7 +976,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { void keepAwake(); return; }
     // HP host dikunci / pindah aplikasi: jeda permainan (kecuali mode lokal, yang memang pindah-pindah tab)
-    if (!backend.localOnly && room?.game && room.auto && !room.auto.paused) {
+    if (!standby && !backend.localOnly && room?.game && room.auto && !room.auto.paused) {
       setPaused(room.game, room.auto, true, Date.now());
       commit();
     }
@@ -893,9 +991,12 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   setInterval(tick, 250);
 
   if (room) {
-    listen();
-    makeQr();
-    commit();
+    if (otherTabHolds()) { standby = true; render(); } else {
+      holdLock(true);
+      listen();
+      makeQr();
+      commit();
+    }
   } else {
     render();
   }

@@ -34,7 +34,7 @@ export const DEFAULT_TIMINGS: AutoTimings = {
  * sungguhan yang sedang memilih.
  */
 export const NIGHT_MIN_MS: [number, number] = [500, 1000];
-export const NIGHT_DEAD_MS: [number, number] = [5000, 9000];
+export const NIGHT_DEAD_MS: [number, number] = [4000, 15000];
 /** Jeda setelah narasi pagi / hasil voting sebelum lanjut */
 export const MORNING_GRACE_MS = 1500;
 export const RESULT_GRACE_MS = 2000;
@@ -147,7 +147,8 @@ export function autoTick(g: GameState, a: AutoState, now: number, opts: TickOpti
           a.minAt = now + between(rng, NIGHT_MIN_MS);
           a.endsAt = now + t.nightStepSeconds * 1000;
         } else {
-          a.endsAt = now + between(rng, NIGHT_DEAD_MS);
+          // Jangan lebih lama dari batas waktu langkah aktif (itu juga bisa jadi petunjuk)
+          a.endsAt = now + Math.min(between(rng, NIGHT_DEAD_MS), t.nightStepSeconds * 1000);
         }
         break;
       }

@@ -61,7 +61,7 @@ function morningClips(g: GameState): string[] {
     if (g.settings.revealRoleOnDeath) out.push(clip.role(p.role));
   }
   if (player(g, g.lastRevived)) out.push('revived');
-  if (player(g, g.spellTarget)) out.push(`spell_${g.spellMode}`);
+  if (player(g, g.spellTarget)?.isAlive) out.push(`spell_${g.spellMode}`);
   if (cardStolenNotice(g)) out.push('thief_swap');
   if (cardsSwappedNotice(g)) out.push('troublemaker_swap');
   return out;
