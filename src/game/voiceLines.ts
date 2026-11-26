@@ -4,12 +4,12 @@
 // Setelah mengubah teks di file ini, jalankan ulang `scripts/generate-vo.sh`.
 
 import { ROLES, ROLE_INFO, WAKE_SCRIPT, sleepScript, type Role } from './roles';
-import type { DeathCause, Winner } from './engine';
+import { THIEF_NOTICE, TROUBLEMAKER_NOTICE, type DeathCause, type Winner } from './engine';
 
 export const NIGHT_FALLS = 'Malam telah tiba. Semua warga desa, tutup mata kalian.';
 export const MORNING_COMES = 'Pagi telah tiba. Semua warga desa, buka mata kalian.';
 export const VOTE_SCRIPT = 'Saatnya voting. Pilih orang yang kalian curigai sebagai serigala di HP masing-masing.';
-export const HUNTER_SCRIPT = 'Pemburu, sebelum mati, tembak satu orang!';
+export const HUNTER_SCRIPT = 'Hunter, sebelum mati, tembak satu orang!';
 export const DISCUSSION_SCRIPT = 'Silakan berdiskusi. Cari tahu siapa serigala di antara kalian.';
 export const TIME_UP_SCRIPT = 'Waktu diskusi habis.';
 export const PEACEFUL_SCRIPT = 'Malam yang damai. Tidak ada yang mati semalam.';
@@ -18,18 +18,18 @@ export const GREETING_SCRIPT = 'Halo, aku narator kalian malam ini.';
 
 const DEATH_CLIP_TEXT: Record<DeathCause, string> = {
   wolves: 'Satu warga dimangsa serigala.',
-  poison: 'Satu warga diracun penyihir.',
+  poison: 'Satu warga diracun Witch.',
   vote: 'Satu warga dieksekusi oleh warga desa.',
-  hunter: 'Satu orang ditembak pemburu.',
+  hunter: 'Satu orang ditembak Hunter.',
   heartbreak: 'Satu orang mati patah hati.',
-  disease: 'Satu orang tertular penyakit Si Sakit.',
+  disease: 'Satu orang tertular penyakit Diseased.',
 };
 
 const WIN_CLIP_TEXT: Record<Winner['kind'], string> = {
   village: 'Desa menang! Semua werewolf telah dibasmi. Desa kembali damai.',
   wolves: 'Serigala menang! Serigala menguasai desa. Lolongan menggema di bawah bulan purnama.',
   lovers: 'Cinta menang! Sepasang kekasih bertahan sampai akhir, melawan dunia.',
-  tanner: 'Si Penyamak menang! Dia berhasil membuat dirinya dieksekusi. Semua orang lain kalah!',
+  tanner: 'Tanner menang! Dia berhasil membuat dirinya dieksekusi. Semua orang lain kalah!',
   draw: 'Seri! Tidak ada yang tersisa di desa. Serigala dan warga sama-sama binasa.',
 };
 
@@ -48,7 +48,9 @@ export const VOICE_CLIPS: Record<string, string> = (() => {
     revived: 'Seseorang bangkit kembali dari kematian!',
     spell_mute: 'Ada warga yang dibungkam. Dia tidak boleh bicara hari ini. Lihat layar.',
     spell_noVote: 'Ada warga yang dilarang ikut voting hari ini. Lihat layar.',
-    prince_saved: 'Ternyata dia adalah Pangeran, dan dia selamat dari eksekusi!',
+    thief_swap: THIEF_NOTICE,
+    troublemaker_swap: TROUBLEMAKER_NOTICE,
+    prince_saved: 'Ternyata dia adalah Prince, dan dia selamat dari eksekusi!',
   };
   for (const [role, text] of Object.entries(WAKE_SCRIPT)) c[`wake_${role}`] = text!;
   for (const role of Object.keys(WAKE_SCRIPT) as Role[]) c[`sleep_${role}`] = sleepScript(role);

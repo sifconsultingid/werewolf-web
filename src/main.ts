@@ -23,10 +23,10 @@ function renderHome() {
   const last = savedHostRoom();
   app.innerHTML = `${stars()}<main class="wrap home">
     <header class="hero"><div class="moon-big">🌕</div><div class="title">WEREWOLF</div>
-      <div class="subtitle">Permainan pesta tebak serigala — satu narator, semua pemain pakai HP masing-masing</div></header>
+      <div class="subtitle">Permainan pesta tebak serigala — narator otomatis, semua pemain pakai HP masing-masing</div></header>
     <div class="card">
-      <h3>🎙️ Saya Narator</h3>
-      <p class="muted small">Atur jumlah pemain & komposisi peran, lalu bagikan link/QR ke pemain.</p>
+      <h3>🎙️ Buat Ruang</h3>
+      <p class="muted small">Buat ruang, bagikan link/QR ke pemain, lalu ikut main dengan narator otomatis (atau jadi narator manual).</p>
       <a class="btn primary block" href="?narator">Buat Permainan</a>
       ${last ? `<a class="btn block" href="?host=${esc(last)}">Lanjutkan ruang ${esc(last)}</a>` : ''}
     </div>

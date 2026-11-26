@@ -6,6 +6,7 @@
 
 import type { Line, Narration } from '../game/narration';
 import { GREETING_SCRIPT, VOICE_CLIPS } from '../game/voiceLines';
+import { spoken } from '../game/pronounce';
 
 const PREF_KEY = 'ww:voice';
 /** Nilai voiceURI khusus untuk memakai klip rekaman. */
@@ -24,7 +25,8 @@ function loadPrefs(): VoicePrefs {
   return d;
 }
 
-type Item = { kind: 'clip'; id: string } | { kind: 'tts'; text: string };
+/** `src` = efek suara (data URI) yang ikut antrean narasi, bukan klip rekaman. */
+type Item = { kind: 'clip'; id: string; src?: string } | { kind: 'tts'; text: string };
 
 export interface Voice {
   readonly supported: boolean;
@@ -40,6 +42,10 @@ export interface Voice {
   /** Sedang memakai klip rekaman? */
   usingRecorded(): boolean;
   isSpeaking(): boolean;
+  /** Browser (mis. Safari iOS) menolak memutar suara sampai pengguna mengetuk layar */
+  readonly blocked: boolean;
+  /** Panggil dari dalam event ketukan/klik: membuka izin audio dan melanjutkan antrean yang tertahan. */
+  unlock(): void;
   setEnabled(on: boolean): void;
   setRate(rate: number): void;
   setVoice(uri: string | null): void;
@@ -51,6 +57,14 @@ export interface Voice {
   replay(): void;
   /** Bacakan satu kalimat; pakai klip `clipId` jika rekaman aktif. */
   say(text: string, clipId?: string): void;
+  /**
+   * Efek suara singkat (mis. bip timer) lewat elemen audio narator yang sudah dibuka izinnya,
+   * jadi tidak perlu ketukan lagi. Tidak diputar jika suara dimatikan atau narator sedang bicara.
+   * Mengembalikan true jika diputar.
+   */
+  sfx(src: string): boolean;
+  /** Efek suara yang masuk antrean narasi (diputar berurutan, tidak memotong narator). */
+  cue(src: string): void;
   /** Contoh suara yang sedang dipilih. */
   test(): void;
   stop(): void;
@@ -59,6 +73,21 @@ export interface Voice {
 }
 
 const isId = (v: SpeechSynthesisVoice) => /^id([-_]|$)/i.test(v.lang);
+
+/** WAV hening 0,05 detik, untuk "membuka" elemen audio di dalam ketukan pengguna (iOS). */
+function silentWav(): string {
+  const n = 400; // 8 kHz × 0,05 dtk, 8-bit mono
+  const b = new Uint8Array(44 + n);
+  const v = new DataView(b.buffer);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) b[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  str(36, 'data'); v.setUint32(40, n, true); b.fill(128, 44);
+  let bin = '';
+  b.forEach((x) => { bin += String.fromCharCode(x); });
+  return 'data:audio/wav;base64,' + btoa(bin);
+}
 
 export function createVoice(): Voice {
   const synth: SpeechSynthesis | undefined = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
@@ -74,7 +103,11 @@ export function createVoice(): Voice {
   // Antrean pemutaran gabungan (klip & TTS), satu per satu.
   let queue: Item[] = [];
   let playing = false;
-  let audio: HTMLAudioElement | null = null;
+  // Satu elemen audio dipakai ulang: Safari iOS hanya mengizinkan elemen yang pernah diputar
+  // di dalam ketukan pengguna untuk memutar suara lagi nanti (dari timer/perubahan fase).
+  const audio: HTMLAudioElement | null = audioSupported ? new Audio() : null;
+  let unlocked = false;
+  let blocked = false;
   let gen = 0;
 
   const save = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* */ } };
@@ -117,9 +150,7 @@ export function createVoice(): Voice {
     if (!item) { playing = false; return; }
     playing = true;
     const done = () => { if (my === gen) next(); };
-    if (item.kind === 'clip') {
-      audio = new Audio(clipUrl(item.id));
-      audio.playbackRate = prefs.rate;
+    if (item.kind === 'clip' && audio) {
       audio.onended = done;
       audio.onerror = () => {
         // Klip hilang → bacakan teksnya dengan suara browser.
@@ -127,11 +158,30 @@ export function createVoice(): Voice {
         if (text && my === gen) queue.unshift({ kind: 'tts', text });
         done();
       };
-      audio.play().catch(() => done());
+      audio.src = item.src ?? clipUrl(item.id);
+      audio.playbackRate = item.src ? 1 : prefs.rate;
+      audio.play().then(() => {
+        if (blocked) { blocked = false; notify(); }
+      }).catch((e: unknown) => {
+        if (my !== gen) return;
+        if (e instanceof DOMException && e.name === 'NotAllowedError') {
+          // Belum diizinkan: tahan klip ini sampai pengguna mengetuk layar.
+          audio.onended = null;
+          audio.onerror = null;
+          queue.unshift(item);
+          playing = false;
+          if (!blocked) { blocked = true; notify(); }
+          return;
+        }
+        done();
+      });
+    } else if (item.kind === 'clip') {
+      done();
     } else {
       if (!ttsSupported) { done(); return; }
-      const u = new SpeechSynthesisUtterance(item.text);
       const v = pickVoice();
+      // Suara Indonesia: nama peran Inggris pakai ejaan bunyi supaya tidak berlogat Indonesia
+      const u = new SpeechSynthesisUtterance(!v || isId(v) ? spoken(item.text) : item.text);
       if (v) u.voice = v;
       u.lang = v?.lang ?? 'id-ID';
       u.rate = prefs.rate;
@@ -152,7 +202,7 @@ export function createVoice(): Voice {
     gen++;
     queue = [];
     playing = false;
-    if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); audio = null; }
+    if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); }
     synth?.cancel();
   }
 
@@ -174,7 +224,24 @@ export function createVoice(): Voice {
     voices: allVoices,
     hasIndonesian: () => allVoices().some(isId),
     usingRecorded: useRecorded,
-    isSpeaking: () => playing || (ttsSupported && (synth!.speaking || synth!.pending)),
+    isSpeaking: () => playing || blocked || (ttsSupported && (synth!.speaking || synth!.pending)),
+    get blocked() { return blocked; },
+    unlock() {
+      if (blocked && queue.length) {
+        // Masih di dalam ketukan: putar klip yang tertahan sekarang juga.
+        blocked = false;
+        notify();
+        if (!playing) next();
+        unlocked = true;
+        return;
+      }
+      if (unlocked || playing || !audio) return;
+      unlocked = true;
+      const silent = silentWav();
+      audio.src = silent;
+      audio.play().then(() => { if (audio.src === silent) audio.pause(); }).catch(() => { unlocked = false; });
+      if (ttsSupported) { try { synth!.speak(new SpeechSynthesisUtterance('')); } catch { /* */ } }
+    },
     setEnabled(on) {
       prefs = { ...prefs, enabled: on };
       save();
@@ -195,6 +262,17 @@ export function createVoice(): Voice {
     prime(n) { lastKey = n?.key ?? ''; lastLines = n?.lines.slice() ?? []; },
     replay() { stop(); enqueue(itemsFor(lastLines)); },
     say(text, clipId) { enqueue(itemsFor([{ text, clips: clipId ? [clipId] : [] }])); },
+    sfx(src) {
+      if (!prefs.enabled || !audio || playing || blocked) return false;
+      if (ttsSupported && (synth!.speaking || synth!.pending)) return false;
+      audio.onended = null;
+      audio.onerror = null;
+      audio.src = src;
+      audio.playbackRate = 1;
+      audio.play().catch(() => { /* belum diizinkan: lewati bip ini */ });
+      return true;
+    },
+    cue(src) { enqueue([{ kind: 'clip', id: 'sfx', src }]); },
     test() { stop(); enqueue(itemsFor([{ text: GREETING_SCRIPT, clips: ['greeting'] }])); },
     stop,
     onChange(fn) { listeners.push(fn); },

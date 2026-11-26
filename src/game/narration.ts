@@ -2,7 +2,7 @@
 // Fungsi di sini murni (tanpa DOM) agar mudah dites.
 
 import {
-  DEATH_CAUSE_TEXT, morningAnnouncement, player, spellSentence, winnerSubtitle, winnerTitle,
+  cardStolenNotice, cardsSwappedNotice, DEATH_CAUSE_TEXT, morningAnnouncement, player, spellSentence, winnerSubtitle, winnerTitle,
   type DeathEvent, type GameState,
 } from './engine';
 import { ROLE_INFO, sleepScript, WAKE_SCRIPT } from './roles';
@@ -41,7 +41,7 @@ function deathLines(g: GameState, list: DeathEvent[]): Line[] {
   });
 }
 
-/** Panggilan Pemburu + hasil tembakannya, disusun append-only. */
+/** Panggilan Hunter + hasil tembakannya, disusun append-only. */
 function hunterLines(g: GameState): Line[] {
   const pending = g.pendingHunters.length > 0;
   const shots = deathLines(g, g.hunterDeaths);
@@ -62,6 +62,8 @@ function morningClips(g: GameState): string[] {
   }
   if (player(g, g.lastRevived)) out.push('revived');
   if (player(g, g.spellTarget)) out.push(`spell_${g.spellMode}`);
+  if (cardStolenNotice(g)) out.push('thief_swap');
+  if (cardsSwappedNotice(g)) out.push('troublemaker_swap');
   return out;
 }
 
@@ -94,7 +96,7 @@ export function narrationFor(g: GameState): Narration | null {
       if (!g.executionDone) return { key: `${base}-v`, lines: [L(VOTE_SCRIPT, 'vote')] };
       const lines: Line[] = [];
       const prince = player(g, g.princeSaved);
-      if (prince) lines.push(L(`${prince.name} ternyata adalah Pangeran, dan dia selamat dari eksekusi!`, 'prince_saved'));
+      if (prince) lines.push(L(`${prince.name} ternyata adalah Prince, dan dia selamat dari eksekusi!`, 'prince_saved'));
       else if (g.executionDeaths.length) lines.push(...deathLines(g, g.executionDeaths));
       else lines.push(L(NO_EXECUTION_SCRIPT, 'no_execution'));
       lines.push(...hunterLines(g));

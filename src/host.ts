@@ -5,7 +5,7 @@ import QRCode from 'qrcode';
 import {
   balanceScore, beginFirstRound, changeCount, commitStep, computeWinner, currentStep, DEFAULT_SETTINGS,
   eligibleVoters, execute, finishDay, goToDiscussion, goToVote, hunterShoots, MAX_PLAYERS, MIN_PLAYERS,
-  morningAnnouncement, player, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
+  cardStolenNotice, cardsSwappedNotice, morningAnnouncement, player, THIEF_NOTICE, TROUBLEMAKER_NOTICE, resetBallots, setupError, spellSentence, totalRoles, voteLeaders, votes,
   winnerSubtitle, winnerTitle, autoAssignRoles, type GameState, type Settings,
 } from './game/engine';
 import {
@@ -13,12 +13,19 @@ import {
   removeSeat, startGame, syncAutoCounts, type PlayerAction, type Room,
 } from './game/room';
 import { ROLES, ROLE_INFO, sleepScript, WAKE_SCRIPT, type Role, type RoleCounts } from './game/roles';
+import {
+  adjustStageTime, autoTick, DEFAULT_TIMINGS, finishStageNow, hostCanControl, setPaused, type AutoTimings,
+} from './game/auto';
 import { HUNTER_SCRIPT, narrationFor, NIGHT_FALLS, MORNING_COMES, TIME_UP_SCRIPT, VOTE_SCRIPT } from './game/narration';
-import type { Backend } from './net/backend';
+import type { Backend, Unsub } from './net/backend';
+import { startPlayer } from './player';
 import {
   causeText, chip, delegate, discussionRemaining, esc, fmtTime, patch, roleGradient, roleTag, stars, teamTag,
 } from './ui/common';
 import { createVoice, RECORDED } from './ui/voice';
+import { createBeeper } from './ui/beep';
+import { createMusic, type Mood } from './ui/music';
+import { howlWav } from './ui/howl';
 
 const STORE = (code: string) => `ww:host:${code}`;
 export const LAST_HOST_KEY = 'ww:host:last';
@@ -30,11 +37,51 @@ export function savedHostRoom(): string | null {
   } catch { return null; }
 }
 
-interface SetupDraft { expected: number; counts: RoleCounts; auto: boolean; settings: Settings }
+interface SetupDraft {
+  expected: number; counts: RoleCounts; auto: boolean; settings: Settings;
+  /** Host ikut bermain, narator dijalankan sistem */
+  hostPlays: boolean; timings: AutoTimings;
+}
+
+/** Backend semu untuk layar pemain milik host: data langsung dari memori, aksi langsung diproses. */
+function loopback(uid: string, onAction: (a: unknown) => void) {
+  let pubCb: ((d: unknown) => void) | null = null;
+  let privCb: ((d: unknown) => void) | null = null;
+  let lastPub: unknown = null;
+  let lastPriv: unknown = null;
+  const noop: Unsub = () => {};
+  return {
+    label: 'Host', localOnly: false,
+    uid: async () => uid,
+    onActions: () => noop,
+    publishPublic: async () => {},
+    publishPrivate: async () => {},
+    watchPublic: (_c: string, cb: (d: unknown) => void) => { pubCb = cb; if (lastPub) queueMicrotask(() => cb(lastPub)); return () => { pubCb = null; }; },
+    watchPrivate: (_c: string, _u: string, cb: (d: unknown) => void) => { privCb = cb; if (lastPriv) queueMicrotask(() => cb(lastPriv)); return () => { privCb = null; }; },
+    sendAction: async (_c: string, a: unknown) => { onAction(a); },
+    push(pub: unknown, priv: unknown) {
+      lastPub = pub; lastPriv = priv;
+      pubCb?.(pub); privCb?.(priv);
+    },
+  } satisfies Backend & { push(pub: unknown, priv: unknown): void };
+}
+
+const HOST_NAME_KEY = 'ww:name';
 
 export function startHost(app: HTMLElement, backend: Backend, resumeCode: string | null): void {
   let room: Room | null = null;
-  let draft: SetupDraft = { expected: 8, counts: autoAssignRoles(8), auto: true, settings: { ...DEFAULT_SETTINGS } };
+  let draft: SetupDraft = {
+    expected: 8, counts: autoAssignRoles(8), auto: true, settings: { ...DEFAULT_SETTINGS },
+    hostPlays: true, timings: { ...DEFAULT_TIMINGS },
+  };
+  // Dua area: kontrol host, dan layar pemain milik host (mode host ikut main)
+  app.innerHTML = '<div id="host-root"></div><div id="player-root" hidden></div>';
+  const hostRoot = app.querySelector<HTMLElement>('#host-root')!;
+  const playerRoot = app.querySelector<HTMLElement>('#player-root')!;
+  let loop: ReturnType<typeof loopback> | null = null;
+  let speakingSince = 0;
+  let lastBeat = 0;
+  let wakeLock: { release(): Promise<void> } | null = null;
   let showSecrets = true;
   let qrUrl = '';
   let unsubActions: (() => void) | null = null;
@@ -42,14 +89,41 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
   const lastSent = new Map<string, string>();
   let autoTimer: { key: string; at: number; handle: number } | null = null;
   const voice = createVoice();
+  const music = createMusic();
   let voicePrimed = false;
   let timeUpSaid = '';
+  let prevWolfTarget: string | null = null;
 
   if (resumeCode) {
     try {
       const raw = localStorage.getItem(STORE(resumeCode));
       if (raw) room = JSON.parse(raw) as Room;
     } catch { /* abaikan */ }
+    // Halaman host dibuka ulang di tengah permainan: jeda dulu, host menekan Lanjut
+    // (sekaligus memberi izin browser untuk memutar suara).
+    if (room?.game && room.auto) setPaused(room.game, room.auto, true, Date.now());
+  }
+
+  const isAuto = () => !!room?.autoNarrator;
+
+  function ensurePlayerView() {
+    if (!room?.autoNarrator || !room.hostUid || loop) return;
+    loop = loopback(room.hostUid, (a) => {
+      if (!room) return;
+      applyPlayerAction(room, room.hostUid!, a as PlayerAction);
+      commit();
+    });
+    startPlayer(playerRoot, loop, room.code);
+  }
+
+  async function keepAwake() {
+    const nav = navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void>; addEventListener(e: string, f: () => void): void }> } };
+    if (!room || wakeLock || !nav.wakeLock || document.visibilityState !== 'visible') return;
+    try {
+      const lock = await nav.wakeLock.request('screen');
+      wakeLock = lock;
+      lock.addEventListener('release', () => { wakeLock = null; });
+    } catch { /* tidak didukung / ditolak */ }
   }
 
   const joinLink = () => {
@@ -75,7 +149,9 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       lastSent.set('*', stripTime(pub));
       await backend.publishPublic(room.code, JSON.parse(pub));
     }
+    if (loop && room.hostUid) loop.push(JSON.parse(pub), buildPrivateView(room, room.hostUid, now));
     const uids = new Set<string>([...room.seats.map((s) => s.uid), ...Object.keys(room.notices), ...knownUids]);
+    if (room.hostUid) uids.delete(room.hostUid); // layar pemain host dilayani lewat loopback
     for (const uid of uids) {
       const priv = JSON.stringify(buildPrivateView(room, uid, now));
       if (lastSent.get(uid) !== stripTime(priv)) {
@@ -116,7 +192,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const g = room?.game;
     const step = g ? currentStep(g) : undefined;
     const key = g && step ? `${g.nightNumber}-${g.stepIndex}` : '';
-    if (!step || step.active) {
+    if (!step || step.active || isAuto()) {
       if (autoTimer) { clearTimeout(autoTimer.handle); autoTimer = null; }
       return;
     }
@@ -182,16 +258,50 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       }
       room ? commit() : render();
     },
-    createRoom: () => {
+    hostPlays: () => { draft.hostPlays = !draft.hostPlays; render(); },
+    timing: (arg, el) => {
+      const t = room?.timings ?? draft.timings;
+      const k = arg as keyof AutoTimings;
+      t[k] = Math.max(10, Math.min(300, t[k] + Number(el.dataset.delta)));
+      room ? commit() : render();
+    },
+    createRoom: async () => {
+      let hostName = '';
+      if (draft.hostPlays) {
+        const input = document.getElementById('host-name') as HTMLInputElement | null;
+        hostName = input?.value.trim() ?? '';
+        if (!hostName) { input?.focus(); toast('Isi namamu dulu'); return; }
+        try { localStorage.setItem(HOST_NAME_KEY, hostName); } catch { /* */ }
+      }
       const code = randomCode();
-      room = createRoom(code, draft.expected, draft.settings);
-      room.counts = draft.counts;
-      room.autoCounts = draft.auto;
+      const r = createRoom(code, draft.expected, draft.settings, { autoNarrator: draft.hostPlays, timings: draft.timings });
+      r.counts = draft.counts;
+      r.autoCounts = draft.auto;
+      if (draft.hostPlays) {
+        const uid = await backend.uid();
+        applyPlayerAction(r, uid, { type: 'join', name: hostName });
+        r.hostUid = uid;
+        r.autoCounts = draft.auto;
+        if (draft.auto) r.counts = draft.counts; // jangan pakai komposisi 1 pemain
+      }
+      room = r;
       history.replaceState(null, '', `?host=${code}`);
       listen();
       makeQr();
+      void keepAwake();
       commit();
     },
+    stageNow: () => guard(() => {
+      if (room?.game && room.auto) finishStageNow(room.game, room.auto, Date.now());
+    }),
+    stageTime: (arg) => guard(() => {
+      if (room?.game && room.auto) adjustStageTime(room.game, room.auto, Number(arg), Date.now());
+    }),
+    pause: () => guard(() => {
+      if (!room?.game || !room.auto) return;
+      setPaused(room.game, room.auto, !room.auto.paused, Date.now());
+      if (!room.auto.paused) voice.replay();
+    }),
     copyLink: async () => {
       try { await navigator.clipboard.writeText(joinLink()); toast('Link disalin'); } catch { prompt('Salin link ini:', joinLink()); }
     },
@@ -205,6 +315,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       const err = setupError(room.seats.length, room.counts);
       if (err) throw new Error(err);
       startGame(room);
+      void keepAwake();
     }),
     beginRound: () => guard(() => beginFirstRound(room!.game!)),
     skipStep: () => {
@@ -218,7 +329,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       commitStep(g, { target: target ?? undefined });
     }),
     skipHunter: () => {
-      if (!confirm('Pemburu tidak menembak?')) return;
+      if (!confirm('Hunter tidak menembak?')) return;
       guard(() => hunterShoots(room!.game!, null));
     },
     toDiscussion: () => guard(() => goToDiscussion(room!.game!)),
@@ -252,8 +363,11 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     revote: () => guard(() => resetBallots(room!.game!)),
     finishDay: () => guard(() => finishDay(room!.game!)),
     toggleSecrets: () => { showSecrets = !showSecrets; render(); },
+    voiceUnlock: () => { voice.unlock(); render(); },
     voiceToggle: () => { voice.setEnabled(!voice.enabled); if (voice.enabled) voice.replay(); render(); },
     voiceReplay: () => { if (!voice.enabled) voice.setEnabled(true); voice.replay(); render(); },
+    musicToggle: () => { music.setEnabled(!music.enabled); render(); },
+    musicVolume: (arg) => { music.setVolume(music.volume + Number(arg)); render(); },
     voiceRate: (arg) => { voice.setRate(Math.round((voice.rate + Number(arg)) * 100) / 100); render(); },
     voiceTest: () => {
       if (!voice.enabled) voice.setEnabled(true);
@@ -353,17 +467,56 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${voice.usingRecorded() ? '<p class="muted tiny">Suara rekaman tidak menyebut nama pemain; nama tetap tampil di layar.</p>' : ''}
       ${!voice.usingRecorded() && list.length && !voice.hasIndonesian() ? '<p class="warn small">Perangkat ini belum punya suara Bahasa Indonesia, jadi logatnya mungkin aneh. Coba Chrome/Edge, atau pasang suara Indonesia di pengaturan sistem.</p>' : ''}` : ''}
       <p class="muted tiny">Suara diputar dari perangkat narator ini, jadi sambungkan ke speaker kalau main ramai-ramai.</p>
+    </div>${musicCard()}`;
+  }
+
+  function musicCard(): string {
+    if (!music.supported) return '';
+    const pct = Math.round(music.volume * 100);
+    return `<div class="card"><h3>🎵 Musik Latar</h3>
+      <label class="toggle"><input type="checkbox" data-act="musicToggle" ${music.enabled ? 'checked' : ''}><span>Putar musik latar tiap fase</span></label>
+      ${music.enabled ? `<div class="row between"><span>Volume musik</span><div class="stepper">
+        <button data-act="musicVolume" data-arg="-0.1" ${pct <= 0 ? 'disabled' : ''}>−</button><span>${pct}%</span>
+        <button data-act="musicVolume" data-arg="0.1" ${pct >= 100 ? 'disabled' : ''}>+</button></div></div>
+      <p class="muted tiny">Lagu beda untuk lihat kartu, malam, pagi, diskusi, voting, dan akhir permainan. Otomatis mengecil saat narator bicara.</p>` : ''}
     </div>`;
   }
 
   function voiceControls(): string {
     if (!voice.supported) return '';
     return `<button class="btn small ghost" data-act="voiceToggle" title="${voice.enabled ? 'Matikan' : 'Nyalakan'} voice-over">${voice.enabled ? '🔊' : '🔇'}</button>
-      <button class="btn small ghost" data-act="voiceReplay" title="Bacakan ulang narasi">🔁</button>`;
+      <button class="btn small ghost" data-act="voiceReplay" title="Bacakan ulang narasi">🔁</button>
+      ${music.supported ? `<button class="btn small ghost${music.enabled ? '' : ' off'}" data-act="musicToggle" title="${music.enabled ? 'Matikan' : 'Nyalakan'} musik latar">🎵</button>` : ''}`;
+  }
+
+  function hostModeCard(): string {
+    let saved = '';
+    try { saved = localStorage.getItem(HOST_NAME_KEY) ?? ''; } catch { /* */ }
+    return `<div class="card"><h3>Cara main</h3>
+      <label class="toggle"><input type="checkbox" data-act="hostPlays" ${draft.hostPlays ? 'checked' : ''}><span>🙋 Saya ikut main (narator otomatis)</span></label>
+      ${draft.hostPlays
+        ? `<p class="muted small">Kamu dapat peran acak seperti pemain lain. Narator dijalankan sistem dan suaranya diputar dari HP ini.</p>
+          <label class="field"><span>Nama kamu</span><input id="host-name" maxlength="20" autocomplete="nickname" placeholder="mis. Budi" value="${esc(saved)}"></label>`
+        : '<p class="muted small">Kamu jadi narator dan tidak ikut main. Layar ini menampilkan semua peran dan tombol untuk memandu permainan.</p>'}
+    </div>`;
+  }
+
+  function timingsCard(t: AutoTimings): string {
+    const row = (k: keyof AutoTimings, label: string) => `<div class="row between"><span>${label}</span><div class="stepper">
+      <button data-act="timing" data-arg="${k}" data-delta="-10">−</button><span>${t[k]} dtk</span>
+      <button data-act="timing" data-arg="${k}" data-delta="10">+</button></div></div>`;
+    return `<div class="card"><h3>⏱️ Batas waktu narator otomatis</h3>
+      ${row('revealSeconds', 'Lihat kartu & siap')}
+      ${row('nightStepSeconds', 'Tiap peran malam')}
+      ${row('voteSeconds', 'Voting')}
+      ${row('hunterSeconds', 'Hunter menembak')}
+      <p class="muted tiny">Pemain yang tidak merespons sampai waktu habis dilewati. Serigala yang tidak sepakat = tidak ada korban. Voting seri diulang sekali, seri lagi = tidak ada eksekusi.</p>
+    </div>`;
   }
 
   function renderSetup(): string {
-    return `<header class="hero"><div class="title">WEREWOLF</div><div class="subtitle">Mode Narator</div></header>
+    return `<header class="hero"><div class="title">WEREWOLF</div><div class="subtitle">Buat Permainan</div></header>
+      ${hostModeCard()}
       <div class="card"><h3>Perkiraan jumlah pemain</h3>
         <div class="row center big-stepper"><button class="btn round" data-act="expected" data-arg="-1">−</button>
         <span class="big-num">${draft.expected}</span><button class="btn round" data-act="expected" data-arg="1">+</button></div>
@@ -371,6 +524,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       </div>
       ${compositionEditor(draft.counts, draft.expected, draft.auto)}
       ${settingsCard(draft.settings)}
+      ${draft.hostPlays ? timingsCard(draft.timings) : ''}
       ${voiceCard()}
       <button class="btn primary block" data-act="createRoom">🌕 Buat Ruang</button>
       <p class="muted small center">Mode realtime: ${esc(backend.label)}</p>`;
@@ -395,17 +549,19 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
           <div class="card">
             <h3>Pemain masuk (${n})</h3>
             ${n === 0 ? '<p class="muted">Belum ada pemain. Bagikan link atau QR di atas.</p>' : ''}
-            <ol class="seat-list">${r.seats.map((s, i) => `<li><span class="seat-no">${i + 1}</span><span class="grow">${esc(s.name)}</span>
+            <ol class="seat-list">${r.seats.map((s, i) => `<li><span class="seat-no">${i + 1}</span><span class="grow">${esc(s.name)}${s.uid === r.hostUid ? ' <span class="muted small">(kamu, host)</span>' : ''}</span>
               <button class="icon" data-act="up" data-arg="${s.pid}" ${i === 0 ? 'disabled' : ''} title="Naik">▲</button>
               <button class="icon" data-act="down" data-arg="${s.pid}" ${i === n - 1 ? 'disabled' : ''} title="Turun">▼</button>
-              <button class="icon danger" data-act="kick" data-arg="${s.pid}" title="Keluarkan">✕</button></li>`).join('')}</ol>
-            <p class="muted tiny">Urutan ini = urutan duduk melingkar (dipakai Insomnia untuk mencari Werewolf terdekat).</p>
+              ${s.uid === r.hostUid ? '<span class="icon"></span>' : `<button class="icon danger" data-act="kick" data-arg="${s.pid}" title="Keluarkan">✕</button>`}</li>`).join('')}</ol>
+            <p class="muted tiny">Urutan ini = urutan duduk melingkar (dipakai Insomniac untuk mencari Werewolf terdekat).</p>
           </div>
         </div>
         <div>
           ${compositionEditor(r.counts, n, r.autoCounts)}
           ${settingsCard(r.settings)}
+          ${r.autoNarrator ? timingsCard(r.timings ?? DEFAULT_TIMINGS) : ''}
           ${voiceCard()}
+          ${r.autoNarrator ? '<p class="muted small">🤖 Narator otomatis: setelah Mulai, permainan berjalan sendiri. Kamu main dari layar ini seperti pemain lain. Jangan kunci layar HP ini.</p>' : ''}
           <button class="btn primary block" data-act="start" ${err ? 'disabled' : ''}>🎲 Mulai &amp; Acak Peran</button>
           ${err ? `<p class="muted small center">${esc(err)}</p>` : ''}
         </div>
@@ -416,8 +572,17 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (!showSecrets) return `<button class="btn small ghost block" data-act="toggleSecrets">🔒 Tampilkan catatan rahasia</button>`;
     const flags: string[] = [];
     if (g.players.some((p) => p.role === 'witch')) flags.push(`🧪 Penyembuh: ${g.witchHealUsed ? 'terpakai' : 'ada'} • Racun: ${g.witchPoisonUsed ? 'terpakai' : 'ada'}`);
-    if (g.players.some((p) => p.role === 'necromancer')) flags.push(`🖐️ Nekromancer: ${g.necromancerUsed ? 'terpakai' : 'belum'}`);
+    if (g.players.some((p) => p.role === 'necromancer')) flags.push(`🖐️ Necromancer: ${g.necromancerUsed ? 'terpakai' : 'belum'}`);
     if (g.lastProtected) flags.push(`🛡️ Dilindungi malam lalu: ${esc(player(g, g.lastProtected)?.name)}`);
+    if (g.thiefSwap) {
+      const t = g.thiefSwap;
+      flags.push(`🦹 ${esc(player(g, t.thiefId)?.name)} mencuri kartu ${esc(ROLE_INFO[t.stolenRole].name)} dari ${esc(player(g, t.targetId)?.name)}`);
+    }
+    if (g.troublemakerSwap) {
+      const t = g.troublemakerSwap;
+      const [a, b] = t.pids.map((id) => esc(player(g, id)?.name));
+      flags.push(`🃏 ${esc(player(g, t.troublemakerId)?.name)} menukar kartu ${a} ⇄ ${b}${t.newRoles ? ` (sekarang ${a}: ${esc(ROLE_INFO[t.newRoles[0]].name)}, ${b}: ${esc(ROLE_INFO[t.newRoles[1]].name)})` : ' (berlaku pagi)'}`);
+    }
     if (g.lovers.length) flags.push(`💘 Kekasih: ${g.lovers.map((l) => esc(player(g, l)?.name)).join(' & ')}`);
     return `<div class="card secrets">
       <div class="row between"><h3>🔒 Catatan Rahasia Narator</h3><button class="btn small ghost" data-act="toggleSecrets">Sembunyikan</button></div>
@@ -445,12 +610,12 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const h = g.pendingHunters[0];
     let out = '';
     if (h) {
-      out += `<div class="card hunter"><h3>🎯 ${esc(player(g, h)?.name)} adalah PEMBURU!</h3>
+      out += `<div class="card hunter"><h3>🎯 ${esc(player(g, h)?.name)} adalah HUNTER!</h3>
         ${script(HUNTER_SCRIPT)}
-        <p class="muted">Menunggu Pemburu memilih target di HP-nya…</p>
+        <p class="muted">Menunggu Hunter memilih target di HP-nya…</p>
         <button class="btn small ghost" data-act="skipHunter">Lewati tembakan</button></div>`;
     }
-    if (g.hunterDeaths.length) out += `<div class="card"><h3>Korban tembakan Pemburu</h3>${deathList(g, g.hunterDeaths)}</div>`;
+    if (g.hunterDeaths.length) out += `<div class="card"><h3>Korban tembakan Hunter</h3>${deathList(g, g.hunterDeaths)}</div>`;
     return out;
   }
 
@@ -461,7 +626,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     const prev = g.nightSteps[g.stepIndex - 1];
     let body = '';
     if (!step.active) {
-      body = `<p class="muted">💤 Pemegang peran ini sudah mati. Tetap bacakan narasinya agar pemain tidak curiga.</p>
+      const why = holders.some((p) => p.isAlive) ? 'Kesempatan peran ini sudah habis.' : 'Pemegang peran ini sudah mati.';
+      body = `<p class="muted">💤 ${why} Tetap bacakan narasinya agar pemain tidak curiga.</p>
         <p>Lanjut otomatis dalam <b data-countdown="${autoTimer?.at ?? 0}">…</b></p>
         <button class="btn" data-act="nextNow">Lanjut sekarang</button>`;
     } else if (step.role === 'werewolf') {
@@ -494,6 +660,8 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       ${g.lastDeaths.length ? deathList(g, g.lastDeaths) : '<p class="peace">☀️ Malam yang damai. Tidak ada yang mati.</p>'}
       ${g.lastRevived ? `<p class="good">🖐️ ${esc(player(g, g.lastRevived)?.name)} bangkit kembali!</p>` : ''}
       ${spelled && spelled.isAlive ? `<p class="spell">🤫 ${esc(spellSentence(g.spellMode, spelled.name))}</p>` : ''}
+      ${cardStolenNotice(g) ? `<p class="spell">🦹 ${esc(THIEF_NOTICE)}</p>` : ''}
+      ${cardsSwappedNotice(g) ? `<p class="spell">🃏 ${esc(TROUBLEMAKER_NOTICE)}</p>` : ''}
     </div>
     ${hunterBlock(g)}
     <button class="btn primary block" data-act="toDiscussion" ${pending ? 'disabled' : ''}>
@@ -521,7 +689,7 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
     if (g.executionDone) {
       const decided = g.winner !== null || computeWinner(g) !== null;
       let result = '';
-      if (g.princeSaved) result = `<p class="good big">👑 ${esc(player(g, g.princeSaved)?.name)} ternyata PANGERAN dan selamat!</p>`;
+      if (g.princeSaved) result = `<p class="good big">👑 ${esc(player(g, g.princeSaved)?.name)} ternyata PRINCE dan selamat!</p>`;
       else if (g.executionDeaths.length) result = deathList(g, g.executionDeaths);
       else result = '<p class="peace">✋ Tidak ada yang dieksekusi hari ini.</p>';
       return `<div class="card"><h2>⚖️ Hasil Voting Hari ${g.dayNumber}</h2>${result}</div>
@@ -600,45 +768,129 @@ export function startHost(app: HTMLElement, backend: Backend, resumeCode: string
       <div class="grid2 game"><div>${main}</div><div>${secretsPanel(g)}</div></div>`;
   }
 
+  /** Mode host ikut main: hanya bar kontrol kecil, tanpa info rahasia apa pun. */
+  function renderAutoBar(r: Room, g: GameState): string {
+    const paused = !!r.auto?.paused;
+    const over = g.phase === 'gameOver';
+    return `<header class="topbar host-bar"><div><b>🤖 Ruang ${esc(r.code)}</b> <span class="muted small">narator otomatis</span></div>
+      <div class="row">${voiceControls()}
+      ${over ? '<button class="btn small primary" data-act="playAgain">🔁 Main lagi</button>'
+        : `<button class="btn small ${paused ? 'primary' : ''}" data-act="pause">${paused ? '▶️ Lanjut' : '⏸ Jeda'}</button>`}
+      <button class="btn small ghost" data-act="endRoom">Tutup</button></div></header>
+      ${paused ? '<p class="warn small center">Permainan dijeda. Tekan ▶️ Lanjut untuk meneruskan.</p>' : '<p class="muted tiny center">Suara narator diputar dari HP ini. Jangan kunci layar.</p>'}
+      ${stageControls(r, g)}`;
+  }
+
+  /** Kontrol waktu host untuk tahap lihat kartu, diskusi, dan voting. */
+  function stageControls(r: Room, g: GameState): string {
+    const a = r.auto;
+    const kind = a ? hostCanControl(g, a) : null;
+    if (!a || !kind) return '';
+    const step = kind === 'vote' ? 15 : 30;
+    const deadline = kind === 'day' ? g.discussionEndsAt : a.endsAt;
+    const left = kind === 'day' && g.discussionPausedRemaining !== null
+      ? `<b>${fmtTime(g.discussionPausedRemaining)}</b>`
+      : deadline ? `<b data-deadline="${deadline}">…</b>` : '<b>…</b>';
+    const label = { reveal: 'Lihat kartu', day: 'Diskusi', vote: 'Voting' }[kind];
+    const finish = { reveal: '🌙 Mulai sekarang', day: '✋ Selesai, mulai voting', vote: '⚖️ Tutup voting' }[kind];
+    return `<div class="card host-stage"><div class="row between"><span>⏱️ ${label}: ${left}</span>
+        <div class="stepper"><button data-act="stageTime" data-arg="-${step}">−${step}</button><button data-act="stageTime" data-arg="${step}">+${step}</button></div></div>
+        <button class="btn primary block" data-act="stageNow">${finish}</button></div>`;
+  }
+
   function render() {
-    document.body.dataset.phase = room?.game?.phase ?? 'setup';
-    const html = !room ? renderSetup() : !room.game ? renderLobby(room) : renderGame(room, room.game);
     const g = room?.game;
-    const screen = !room ? 'setup' : !g ? 'lobby' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
-    patch(app, `${stars()}<main class="wrap host">${html}</main>`, screen);
+    const autoGame = !!(room && g && room.autoNarrator);
+    if (autoGame) ensurePlayerView();
+    playerRoot.hidden = !autoGame;
+    if (!autoGame) document.body.dataset.phase = g?.phase ?? 'setup';
+    const html = !room ? renderSetup() : !g ? renderLobby(room) : autoGame ? renderAutoBar(room, g) : renderGame(room, g);
+    const screen = !room ? 'setup' : !g ? 'lobby' : autoGame ? 'auto' : `${g.phase}-${g.nightNumber}-${g.dayNumber}-${g.stepIndex}-${g.executionDone}`;
+    const tapBanner = g && voice.enabled && voice.blocked
+      ? '<button class="btn primary block tap-sound" data-act="voiceUnlock">🔊 Ketuk untuk menyalakan suara narator</button>' : '';
+    patch(hostRoot, autoGame ? `<div class="wrap host-auto">${tapBanner}${html}</div>` : `${stars()}<main class="wrap host">${tapBanner}${html}</main>`, screen);
     const n = g ? narrationFor(g) : null;
     // Saat halaman baru dimuat (lanjutkan ruang), jangan langsung bicara; tombol 🔁 untuk mengulang.
+    // Serigala baru saja menetapkan korban: lolongan dulu, baru narasi berikutnya
+    const wolfTarget = g && g.phase === 'night' ? g.wolfTarget : null;
+    if (wolfTarget && !prevWolfTarget && voicePrimed) voice.cue(howlWav());
+    prevWolfTarget = wolfTarget;
     if (!voicePrimed) { voice.prime(n); voicePrimed = true; } else voice.narrate(n);
+    music.setMood(g ? (g.phase as Mood) : null);
     tick();
   }
 
   function tick() {
     const g = room?.game;
-    app.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
+    if (g && g.phase === 'day' && g.discussionEndsAt !== null) {
+      const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
+      const dayKey = `${g.dayNumber}-${g.discussionEndsAt}`;
+      if (rem <= 0 && timeUpSaid !== dayKey) {
+        timeUpSaid = dayKey;
+        voice.say(TIME_UP_SCRIPT, 'time_up');
+      }
+    }
+    if (room && g && room.auto) {
+      const now = Date.now();
+      // Pengaman: jika status "sedang bicara" macet, jangan tahan permainan lebih dari 30 detik
+      const talking = voice.isSpeaking();
+      if (!talking) speakingSince = 0;
+      else if (!speakingSince) speakingSince = now;
+      const speaking = talking && now - speakingSince < 30000;
+      let changed = false;
+      try { changed = autoTick(g, room.auto, now, { speaking, timings: room.timings }); } catch (e) { console.error(e); }
+      if (changed) commit();
+    }
+    // Detak: kirim ulang tampilan publik berkala supaya pemain tahu host masih tersambung
+    if (room && Date.now() - lastBeat > 10000) {
+      lastBeat = Date.now();
+      lastSent.delete('*');
+      publish().catch(() => { /* dicoba lagi di detak berikutnya */ });
+    }
+    let soonest: number | null = null;
+    const note = (sec: number) => { soonest = soonest === null ? sec : Math.min(soonest, sec); };
+    hostRoot.querySelectorAll<HTMLElement>('[data-timer]').forEach((el) => {
       if (g) {
         const rem = discussionRemaining(g.discussionEndsAt, g.discussionPausedRemaining);
         el.textContent = rem <= 0 ? 'Waktu habis!' : fmtTime(rem);
-        const dayKey = `${g.dayNumber}-${g.discussionEndsAt}`;
-        if (rem <= 0 && g.discussionEndsAt !== null && timeUpSaid !== dayKey) {
-          timeUpSaid = dayKey;
-          voice.say(TIME_UP_SCRIPT, 'time_up');
-        }
         el.classList.toggle('low', rem <= 10);
+        if (g.discussionPausedRemaining === null) note(rem);
       }
     });
-    app.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
+    hostRoot.querySelectorAll<HTMLElement>('[data-deadline]').forEach((el) => {
+      const sec = Math.max(0, Math.ceil((Number(el.dataset.deadline) - Date.now()) / 1000));
+      el.textContent = fmtTime(sec);
+      if (!room?.auto?.paused) note(sec);
+    });
+    beeper.update(soonest);
+    music.setDucked(voice.isSpeaking() || !!room?.auto?.paused);
+    hostRoot.querySelectorAll<HTMLElement>('[data-countdown]').forEach((el) => {
       const at = Number(el.dataset.countdown);
       el.textContent = at ? `${Math.max(0, Math.ceil((at - Date.now()) / 1000))} dtk` : '…';
     });
   }
 
-  delegate(app, handlers);
-  app.addEventListener('change', (e) => {
+  delegate(hostRoot, handlers);
+  // Wake Lock butuh interaksi pengguna; coba lagi setiap kali host mengetuk layar
+  app.addEventListener('click', () => { void keepAwake(); });
+  // Safari iOS: suara baru boleh diputar setelah ada ketukan. Buka izinnya di ketukan apa pun.
+  for (const ev of ['touchend', 'click'] as const) document.addEventListener(ev, () => { voice.unlock(); music.unlock(); }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { void keepAwake(); return; }
+    // HP host dikunci / pindah aplikasi: jeda permainan (kecuali mode lokal, yang memang pindah-pindah tab)
+    if (!backend.localOnly && room?.game && room.auto && !room.auto.paused) {
+      setPaused(room.game, room.auto, true, Date.now());
+      commit();
+    }
+  });
+  hostRoot.addEventListener('change', (e) => {
     const el = e.target as HTMLSelectElement;
     if (el.id === 'voice-select') { voice.setVoice(el.value || null); voice.test(); render(); }
   });
-  voice.onChange(() => { if (!room?.game) render(); });
-  setInterval(tick, 500);
+  voice.onChange(() => render());
+  const beeper = createBeeper();
+  beeper.attachVoice(voice);
+  setInterval(tick, 250);
 
   if (room) {
     listen();

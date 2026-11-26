@@ -1,0 +1,36 @@
+name: Generate VO clips
+# Bikin clip voice-over yang belum ada (suara Gadis via edge-tts) lalu commit ke branch ini.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - src/game/voiceLines.ts
+      - src/game/roles.ts
+      - src/game/engine.ts
+      - src/game/pronounce.ts
+      - scripts/vo-lines.ts
+      - scripts/generate_vo.py
+      - .github/workflows/generate-vo.yml
+permissions:
+  contents: write
+jobs:
+  vo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: npm ci
+      - run: pip install edge-tts
+      - run: npx vite-node scripts/vo-lines.ts > /tmp/vo-lines.json
+      - run: python3 scripts/generate_vo.py /tmp/vo-lines.json public/vo/gadis
+      - name: Commit clip baru
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/vo/gadis
+          git diff --cached --quiet && echo "Tidak ada clip baru" || (git commit -m "VO: generate clip yang belum ada" && git push)

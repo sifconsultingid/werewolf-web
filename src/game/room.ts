@@ -4,11 +4,12 @@
 
 import {
   alivePlayers, autoAssignRoles, castVote, commitStep, createGame, currentStep, DEFAULT_SETTINGS,
-  eligibleVoters, hunterShoots, insomniacPeek, morningAnnouncement, seerPeek, player, stepCandidates, votes,
+  eligibleVoters, hunterShoots, insomniacPeek, cardStolenNotice, cardsSwappedNotice, morningAnnouncement, seerPeek, player, troublemakerLeft, stepCandidates, votes,
   type DeathCause, type GameState, type Phase, type Rng, type Settings, type SpellMode, type StepInput,
   type Winner, MAX_PLAYERS,
 } from './engine';
 import { ROLE_INFO, type Role, type RoleCounts, type Team } from './roles';
+import { DEFAULT_TIMINGS, newAutoState, publicDeadline, stageOf, type AutoState, type AutoTimings } from './auto';
 
 export interface Seat { uid: string; pid: string; name: string }
 
@@ -22,6 +23,18 @@ export interface Room {
   game: GameState | null;
   /** Pesan galat terakhir per pemain (ditampilkan di HP-nya) */
   notices: Record<string, { text: string; at: number }>;
+  /** Mode "host ikut main": narator dijalankan sistem (lihat auto.ts) */
+  autoNarrator?: boolean;
+  /** uid host (pembuat ruang) jika ia ikut bermain */
+  hostUid?: string | null;
+  timings?: AutoTimings;
+  /** State narator otomatis selama permainan berjalan */
+  auto?: AutoState | null;
+}
+
+export interface RoomOptions {
+  autoNarrator?: boolean;
+  timings?: AutoTimings;
 }
 
 export type PlayerAction =
@@ -29,7 +42,7 @@ export type PlayerAction =
   | { type: 'hello' }
   | { type: 'ready' }
   | { type: 'night'; input: StepInput }
-  /** Peramal/Insomnia: lihat hasil dulu, lalu kirim 'night' untuk tidur kembali */
+  /** Seer/Insomniac: lihat hasil dulu, lalu kirim 'night' untuk tidur kembali */
   | { type: 'peek'; target?: string; walk?: boolean }
   | { type: 'wolfVote'; target: string | null }
   | { type: 'vote'; target: string | null }
@@ -47,8 +60,12 @@ function randomPid(rng: Rng): string {
   return 'p' + Math.floor(rng() * 36 ** 6).toString(36).padStart(6, '0');
 }
 
-export function createRoom(code: string, expectedPlayers: number, settings: Settings = DEFAULT_SETTINGS): Room {
+export function createRoom(code: string, expectedPlayers: number, settings: Settings = DEFAULT_SETTINGS, opts: RoomOptions = {}): Room {
   return {
+    autoNarrator: !!opts.autoNarrator,
+    hostUid: null,
+    timings: { ...DEFAULT_TIMINGS, ...opts.timings },
+    auto: null,
     code,
     seats: [],
     counts: autoAssignRoles(Math.max(4, expectedPlayers)),
@@ -136,6 +153,7 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
         }
         if (!stepCandidates(g, 'werewolf').some((p) => p.id === action.target)) return fail('Target tidak sah.');
         g.wolfVotes[me.id] = action.target;
+        if (room.auto) return true; // narator otomatis menutup langkah setelah durasi minimum
         const pack = alivePlayers(g).filter((p) => p.role === 'werewolf');
         const picks = pack.map((w) => g.wolfVotes[w.id]);
         if (picks.every((t) => t && t === picks[0])) commitStep(g, { target: picks[0] }, now);
@@ -147,7 +165,14 @@ export function applyPlayerAction(room: Room, uid: string, action: PlayerAction,
         if (!step || !step.active || step.role === 'werewolf' || me.role !== step.role || !me.isAlive) {
           return fail('Bukan giliranmu.');
         }
-        commitStep(g, sanitizeInput(action.input), now);
+        const input = sanitizeInput(action.input);
+        if (room.auto) {
+          // Validasi dulu di salinan, lalu tunggu durasi minimum langkah (lihat autoTick)
+          commitStep(structuredClone(g), input, now);
+          room.auto.pending = { stage: stageOf(g, room.auto).key, input };
+          return true;
+        }
+        commitStep(g, input, now);
         return true;
       }
 
@@ -185,6 +210,10 @@ function sanitizeInput(raw: StepInput | undefined): StepInput {
     const [a, b] = i.lovers.map(str);
     if (a && b) out.lovers = [a, b];
   }
+  if (Array.isArray(i.swap) && i.swap.length === 2) {
+    const [a, b] = i.swap.map(str);
+    if (a && b) out.swap = [a, b];
+  }
   if (str(i.target)) out.target = i.target;
   if (typeof i.heal === 'boolean') out.heal = i.heal;
   if (i.poison === null || str(i.poison)) out.poison = i.poison ?? null;
@@ -200,17 +229,20 @@ function sanitizeInput(raw: StepInput | undefined): StepInput {
 export function startGame(room: Room, rng: Rng = Math.random): void {
   room.game = createGame(room.seats.map((s) => ({ id: s.pid, name: s.name })), room.counts, room.settings, rng);
   room.notices = {};
+  room.auto = room.autoNarrator ? newAutoState() : null;
 }
 
 /** Kembali ke lobi dengan pemain yang sama (untuk main lagi). */
 export function backToLobby(room: Room): void {
   room.game = null;
+  room.auto = null;
   room.notices = {};
   syncAutoCounts(room);
 }
 
 export function removeSeat(room: Room, pid: string): void {
   if (!inLobby(room)) return;
+  if (room.hostUid && seatOf(room, room.hostUid)?.pid === pid) return; // host tidak bisa dikeluarkan
   room.seats = room.seats.filter((s) => s.pid !== pid);
   syncAutoCounts(room);
 }
@@ -263,6 +295,20 @@ export interface PublicView {
   winner: Winner | null;
   lovers: string[];
   announcement: string | null;
+  /** Thief beraksi semalam (diumumkan ke semua, tanpa nama) */
+  cardStolen?: boolean;
+  /** Troublemaker beraksi semalam (diumumkan ke semua, tanpa nama) */
+  cardsSwapped?: boolean;
+  /** Mode narator otomatis */
+  auto?: {
+    paused: boolean;
+    /** Batas waktu tahap ini (reveal, voting, Hunter) */
+    endsAt: number | null;
+    /** Voting ulang karena seri */
+    revote: boolean;
+  };
+  /** pid host yang ikut bermain */
+  hostPid?: string;
   updatedAt: number;
 }
 
@@ -270,17 +316,17 @@ export interface ActionPrompt {
   key: string;
   kind: Role | 'hunter';
   candidates: string[];
-  /** Penyihir: korban serigala malam ini */
+  /** Witch: korban serigala malam ini */
   victim?: string | null;
   canHeal?: boolean;
   canPoison?: boolean;
-  /** Pengawal: tidak boleh melindungi orang ini */
+  /** Guardian: tidak boleh melindungi orang ini */
   lastProtected?: string | null;
-  /** Nekromancer: kekuatan sudah terpakai */
+  /** Necromancer: kekuatan sudah terpakai */
   used?: boolean;
-  /** Peramal: hasil terawangan malam ini (sudah dilihat, tinggal tidur kembali) */
+  /** Seer: hasil terawangan malam ini (sudah dilihat, tinggal tidur kembali) */
   peeked?: { pid: string; isWolf: boolean };
-  /** Insomnia: keputusan malam ini */
+  /** Insomniac: keputusan malam ini */
   walked?: { walked: boolean; nearestWolves: string[] };
 }
 
@@ -301,6 +347,10 @@ export interface PrivateView {
   coupled?: string[];
   seerHistory?: { night: number; pid: string; isWolf: boolean }[];
   insomniacHistory?: { night: number; walked: boolean; nearestWolves: string[] }[];
+  /** Thief: kartu yang kamu curi / korban: kartumu dicuri (peranmu sekarang ada di `role`) */
+  thief?: { stole: boolean; otherPid?: string; stolenRole: Role; night: number };
+  /** Troublemaker: dua orang yang kamu tukar (tanpa kartunya) / korban: peran barumu (tanpa nama pelaku) */
+  troublemaker?: { swapped: string[]; night: number; left: number } | { newRole: Role; night: number };
   action?: ActionPrompt | null;
   updatedAt: number;
 }
@@ -312,7 +362,7 @@ function roleIsPublic(g: GameState, pid: string): boolean {
   if (p.princeRevealed) return true;
   if (p.isAlive) return false;
   if (g.settings.revealRoleOnDeath) return true;
-  // Si Penyamak yang dieksekusi selalu terbuka
+  // Tanner yang dieksekusi selalu terbuka
   return p.role === 'tanner' && g.executedId === p.id;
 }
 
@@ -334,7 +384,8 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
       settings: room.settings, dayNumber: 0, nightNumber: 0, lastDeaths: [], lastRevived: null, spell: null,
       pendingHunter: null, hunterDeaths: [], ballots: {}, tally: {}, eligible: [], executionDone: false,
       executedId: null, executionDeaths: [], princeSaved: null, discussionEndsAt: null,
-      discussionPausedRemaining: null, winner: null, lovers: [], announcement: null, updatedAt: now,
+      discussionPausedRemaining: null, winner: null, lovers: [], announcement: null,
+      hostPid: room.hostUid ? seatOf(room, room.hostUid)?.pid : undefined, updatedAt: now,
     };
   }
   const step = currentStep(g);
@@ -374,11 +425,19 @@ export function buildPublicView(room: Room, now = Date.now()): PublicView {
     winner: g.winner,
     lovers: g.phase === 'gameOver' ? g.lovers : [],
     announcement: g.phase === 'morning' ? morningAnnouncement(g) : null,
+    cardStolen: cardStolenNotice(g) || undefined,
+    cardsSwapped: cardsSwappedNotice(g) || undefined,
+    auto: room.auto ? {
+      paused: room.auto.paused,
+      endsAt: publicDeadline(g, room.auto),
+      revote: g.phase === 'vote' && room.auto.revoteDay === g.dayNumber,
+    } : undefined,
+    hostPid: room.hostUid ? seatOf(room, room.hostUid)?.pid : undefined,
     updatedAt: now,
   };
 }
 
-function actionFor(g: GameState, pid: string): ActionPrompt | null {
+function actionFor(g: GameState, pid: string, auto?: AutoState | null): ActionPrompt | null {
   const me = player(g, pid);
   if (!me) return null;
   if (g.pendingHunters[0] === pid) {
@@ -386,6 +445,8 @@ function actionFor(g: GameState, pid: string): ActionPrompt | null {
   }
   const step = currentStep(g);
   if (!step || !step.active || !me.isAlive || me.role !== step.role) return null;
+  // Aksi sudah dikirim, tinggal menunggu narator otomatis menutup langkah
+  if (auto?.pending && auto.pending.stage === stageOf(g, auto).key) return null;
   const key = `n${g.nightNumber}-s${g.stepIndex}-${step.role}`;
   const candidates = stepCandidates(g, step.role).map((p) => p.id);
   switch (step.role) {
@@ -427,7 +488,7 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
     role: me.role,
     team: ROLE_INFO[me.role].team,
     alive: me.isAlive,
-    action: actionFor(g, me.id),
+    action: actionFor(g, me.id, room.auto),
   };
   if (me.role === 'werewolf') {
     view.pack = g.players.filter((p) => p.role === 'werewolf').map((p) => ({ pid: p.id, name: p.name, alive: p.isAlive }));
@@ -436,6 +497,21 @@ export function buildPrivateView(room: Room, uid: string, now = Date.now()): Pri
   if (g.lovers.includes(me.id)) view.lover = g.lovers.find((l) => l !== me.id);
   if (me.role === 'cupid' && g.lovers.length) view.coupled = [...g.lovers];
   if (me.role === 'seer') view.seerHistory = g.seerHistory.map((s) => ({ night: s.night, pid: s.targetId, isWolf: s.isWolf }));
+  const swap = g.thiefSwap;
+  // Korban baru tahu saat pagi (kartu ditukar saat pagi); Thief langsung tahu curiannya
+  if (swap && (swap.thiefId === me.id || (swap.applied && swap.targetId === me.id))) {
+    const stole = swap.thiefId === me.id;
+    // Korban tidak diberi tahu siapa Thiefnya
+    view.thief = { stole, otherPid: stole ? swap.targetId : undefined, stolenRole: swap.stolenRole, night: swap.night ?? 1 };
+  }
+  const tm = g.troublemakerSwap;
+  if (tm) {
+    const idx = tm.pids.indexOf(me.id);
+    // Korban baru tahu saat pagi; Troublemaker tahu siapa yang ditukar tapi tidak melihat kartunya
+    const night = tm.night ?? 1;
+    if (idx >= 0 && tm.applied && tm.newRoles) view.troublemaker = { newRole: tm.newRoles[idx], night };
+    else if (tm.troublemakerId === me.id) view.troublemaker = { swapped: [...tm.pids], night, left: troublemakerLeft(g) };
+  }
   if (me.role === 'insomniac') {
     view.insomniacHistory = g.insomniacHistory.map((h) => ({ night: h.night, walked: h.walked, nearestWolves: h.nearestWolfIds }));
   }
