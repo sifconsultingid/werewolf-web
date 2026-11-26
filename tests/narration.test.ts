@@ -18,7 +18,7 @@ describe('narasi voice-over', () => {
     commitStep(g, { target: id(g, 'villager') });
     const second = narrationFor(g)!;
     expect(second.key).not.toBe(first.key);
-    expect(texts(second)).toEqual(['Bodyguard, tidurlah kembali.', WAKE_SCRIPT.werewolf]);
+    expect(texts(second)).toEqual(['Guardian, tidurlah kembali.', WAKE_SCRIPT.werewolf]);
   });
 
   it('pagi: mengumumkan korban, lalu memanggil Hunter (append-only, key tetap)', () => {
